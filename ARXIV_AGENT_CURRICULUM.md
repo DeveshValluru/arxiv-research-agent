@@ -13,27 +13,38 @@ Our shared map. Claude follows it so context isn't lost; you use it to see where
 
 **Maybe later:** **D. Reproducibility agent.** Reads a paper, runs its code in a sandbox, and compares results to the reported numbers. (The research radar, C, was dropped.)
 
-The architecture is in `ARXIV_AGENT_ARCHITECTURE.md`. The paused financial agent lives in `../docs/paused-financial-agent/`, and its Phase 0 decisions are reused here.
+The architecture is in `ARXIV_AGENT_ARCHITECTURE.md`. The financial agent (now the active project) lives in `../financial_agent/`, and its Phase 0 decisions are reused here.
 
 ---
 
 ## Current position
-> **Phase 0 — Architecture** · Step 0.6: minimal project layout (last step before Phase 1)
+> **PAUSED on 2026-09-30** to work on the financial agent (`../financial_agent/`).
+> Resume at **Phase 1 · Step 1.1c**: typed `PaperSummary` + parsing, built against `tests/fixtures/arxiv_search_SYNTHETIC.xml`.
+> Before resuming: send **one** live request. If it works, save a real fixture (`tests/fixtures/arxiv_search_llm_judge.xml`). If arXiv still returns 429, keep using the synthetic fixture and consider contacting arXiv support. Never circumvent the block.
+> **2026-10-01:** still 429 after 2+ hours, now with a contact User-Agent (name + email from `.env`, run with `uv run --env-file .env ...`). Plan: build 1.1c/1.1e offline; one live try per day; if still blocked, contact arXiv support (draft written in chat); if it lasts days, consider Semantic Scholar as a fallback source for search/metadata (a different service with its own terms, so not circumvention).
+> **2026-10-01 (later): access returned.** `search_papers` worked live (5 real results), and a real fixture was saved: `tests/fixtures/arxiv_search_llm_judge.xml`. Finding: real titles and abstracts came back on a single line, unlike the synthetic fixture's line breaks, so `_clean` is defensive rather than essential. The synthetic file stays as an edge-case fixture.
+> Uncommitted at pause time (check `git status` on branch `phase-1/arxiv-client`): the 1.1b client, the synthetic fixture, and doc updates.
 
 ---
 
 ## Phase plan
 
-### Phase 0 · Architecture (we are here)
+### Phase 0 · Architecture ✅
 - [x] 0.5 Diagram → `ARXIV_AGENT_ARCHITECTURE.md` (v2: radar removed)
 - [x] 0.1 Walkthrough: the funnel (Diagram 2). Also covered: worked example, context engineering, table parsing
 - [x] 0.2 Walkthrough: long requests run as background jobs; "gate actions, not agents"
 - [x] 0.3 Walkthrough: tools and MCP. What a tool call is, MCP roles, tool design rules, workflow vs agent (Diagram 5)
 - [x] 0.4 Walkthrough: guardrails, the four layers (Diagram 6). Also covered: tools take IDs not URLs, ranking manipulation
-- [ ] 0.6 Minimal project layout
+- [x] 0.6 Minimal project layout: uv project, own git repo, first commit `5708026`
 
-### Phase 1 · Paper ingestion
-- [ ] 1.1 arXiv API basics: search, metadata, polite rate limits
+### Phase 1 · Paper ingestion (we are here)
+- [ ] 1.1 arXiv API client (`src/arxiv_agent/clients/arxiv.py`, branch `phase-1/arxiv-client`)
+  - [ ] 1.1a Look at a raw API response in the browser
+  - [x] 1.1b First call: search, print id + title (httpx + feedparser). Blocked by arXiv 429s on 2026-09-30; **verified live on 2026-10-01**; real fixture saved (`tests/fixtures/arxiv_search_llm_judge.xml`)
+  - [ ] 1.1c Parse into a typed `PaperSummary` (clean whitespace, split id and version)
+  - [ ] 1.1d Politeness + errors: 3-second pacing; retries on 429 (honor `Retry-After`), 503, timeouts; no retry on 400; "Error" entries (hit a real 429 during 1.1b!)
+  - [ ] 1.1e Tests without the network (saved XML samples)
+  - [ ] 1.1f `get_metadata(ids)` via `id_list`
 - [ ] 1.2 Paper parsing: arXiv HTML first, PDF fallback (benchmark Docling / Marker / GROBID); hidden-text detection
 - [ ] 1.3 Chunking by section; tables as single chunks (embed description, return raw table); references as a structured list, not embedded
 - [ ] 1.4 Embedder benchmark: `allenai/specter2` (scientific) vs `bge-large` (general)
@@ -106,6 +117,11 @@ The architecture is in `ARXIV_AGENT_ARCHITECTURE.md`. The paused financial agent
 | 2026-09-29 | Tools take identifiers (arXiv IDs), never URLs; code builds every address. No agent gets a browse/fetch-URL tool | A fooled model can't point the system at an arbitrary website |
 | 2026-09-29 | Tooling: uv (src layout, package `arxiv-agent`, Python 3.12), pytest + ruff; folders mirror architecture boxes and are created just-in-time | Lockfile makes dependencies reproducible; code layout matches the diagram |
 | 2026-09-29 | Git workflow: skeleton commit on main, then one short-lived branch + PR per step; semver tags per phase milestone (v0.x); always commit uv.lock; `CHUNKER_VERSION` constant in index names; eval scores stored with git SHA + eval-set version | A version = everything needed to reproduce a behavior |
+| 2026-09-30 | One git repo per project: the arXiv agent's repo is its own folder | Focused GitHub repo, README, and CI; one clean link for the CV |
+| 2026-09-30 | External API logic lives in plain clients (`clients/arxiv.py`, later `clients/semantic_scholar.py`); MCP servers are thin wrappers around them (Phase 4) | Logic testable without MCP; shared by Searcher, ingestion, and Critic |
+| 2026-09-30 | Layered build, bottom-up: clients → building blocks → tools → agents → API/UI. Clients return complete clean records; the tool layer trims for the LLM | One job per layer; different callers need different fields |
+| 2026-09-30 | Follow arXiv's API Terms of Use: ≤ 1 request / 3 s, one connection at a time, never circumvent a block. Develop and test against saved fixtures, not the live API. If a block persists, wait, then contact arXiv support | Hit persistent 429s with minimal traffic; circumvention is prohibited |
+| 2026-09-30 | Commit what can't be regenerated (code, prompts, configs, evals, uv.lock); ignore rebuildable caches (`data/`, `.venv`) and secrets (`.env`). Eval cases from real traces are scrubbed of personal info before committing | Git is for irreplaceable, small files; some papers' licenses don't allow redistribution; user questions are private |
 
 ---
 
@@ -130,4 +146,4 @@ The architecture is in `ARXIV_AGENT_ARCHITECTURE.md`. The paused financial agent
 - **Commit / branch / PR / tag**: a snapshot / a parallel line of work / a request to merge (where CI runs) / a permanent name for a milestone commit.
 - **Semver**: MAJOR.MINOR.PATCH version numbers. The git SHA is the precise version; semver is the human-friendly label.
 - **Lockfile (`uv.lock`)**: exact versions of every dependency, so any checkout installs the same packages.
-- *(Terms from the financial agent, such as chunk, embedder, reranker, and flywheel, are in `../docs/paused-financial-agent/FINANCIAL_AGENT_CURRICULUM.md`.)*
+- *(Terms from the financial agent, such as chunk, embedder, reranker, and flywheel, are in `../financial_agent/FINANCIAL_AGENT_CURRICULUM.md`.)*

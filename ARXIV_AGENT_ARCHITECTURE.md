@@ -5,7 +5,7 @@ Scope: **A** literature review · **B** paper Q&A.
 
 This is the reference map. We'll walk through it one piece at a time (see "Walkthrough order" at the bottom). You don't need to absorb it all at once.
 
-Cross-cutting decisions carried over from the financial agent (versioning, auth, secrets, cost control, API + SSE) are in `../docs/paused-financial-agent/FINANCIAL_AGENT_ARCHITECTURE.md`.
+Cross-cutting decisions carried over from the financial agent (versioning, auth, secrets, cost control, API + SSE) are in `../financial_agent/FINANCIAL_AGENT_ARCHITECTURE.md`.
 
 ---
 
@@ -66,6 +66,80 @@ Cross-cutting decisions carried over from the financial agent (versioning, auth,
 
 - **Quick** (~20–40 s): abstracts only, no full-text ingestion. For "what's out there on X?"
 - **Deep** (~2–5 min first time): the full funnel with full-text reading. For "write my related-work section."
+
+---
+
+## Build map: layers and which phase builds them
+
+Each layer only uses the layer below it. We build bottom-up, so every layer can be tested on its own before anything depends on it.
+
+```
+ LAYER 5  UI + API         Web UI (Next.js) · FastAPI · SSE · background jobs      Phase 8 (UI); API from Phase 2
+              │
+ LAYER 4  AGENTS           Graph B: Paper Q&A                                      Phase 2 (first end-to-end!)
+                           Graph A: Literature review                              Phase 5
+              │ call
+ LAYER 3  TOOLS            MCP servers (thin wrappers over clients)                Phase 4
+                           library_search · ensure_ingested                        Phase 1–3
+              │ use
+ LAYER 2  BUILDING BLOCKS  Ingestion: fetch → parse → chunk → embed → index        Phase 1.2–1.5
+                           Retrieval: hybrid search + rerank                        Phase 2–3
+              │ use
+ LAYER 1  CLIENTS          clients/arxiv.py                                        Phase 1.1
+                           clients/semantic_scholar.py                             Phase 4
+              │ HTTP
+ OUTSIDE                   arXiv API · Semantic Scholar API · HF models · Postgres
+
+ CROSS-CUTTING             Langfuse traces (from Phase 2) · guardrails (Phase 6) · evals + CI (seeded Phase 2, gated Phase 7)
+```
+
+### Who uses `clients/arxiv.py`
+
+| Caller | Function | Why |
+|---|---|---|
+| Graph A Searcher (through the MCP tool) | `search_papers` | Top of the funnel: find candidate papers |
+| Quick mode (A) | `search_papers` | The abstracts *are* the material |
+| Graph B "Resolve paper" | `search_papers` | Title → arXiv ID |
+| `ensure_ingested` | `get_metadata` | Latest version, title, authors, which source to fetch |
+| Citation Critic | `get_metadata` | Does this ID exist? Does the title match? |
+
+### Each layer has one job
+
+| Layer | Its job | Not its job |
+|---|---|---|
+| Client | Talk to arXiv correctly: build queries, pace requests, retry, parse XML, normalize fields, return a **complete, clean, typed record** | Deciding what to search; trimming for an LLM; storing anything |
+| Tool (MCP) | Shape the record for the model: **trim to ~5 fields**, cap limits, readable errors | Talking HTTP; parsing XML |
+| Agent | Judgment: which query, which paper, what's relevant | Knowing how arXiv works |
+
+### Component spec: `clients/arxiv.py` (Phase 1.1)
+
+```
+ search_papers(query, max_results, sort_by)        get_metadata(ids)
+            │ builds query params                        │ builds id_list params (batches of up to 50)
+            └───────────────────┬────────────────────────┘
+                                ▼
+                     _request(params)    ← the ONLY place that does HTTP:
+                                │          3 s pacing · timeout · retries · User-Agent
+                                │ XML text
+                                ▼
+                     _parse_feed(xml)    ← pure function, no network
+                                │          "Error" entry → ArxivQueryError
+                                │          per entry: _split_id, _clean, dates
+                                ▼
+                     list[PaperSummary]
+```
+
+| Piece | Input | Output | Why it exists |
+|---|---|---|---|
+| `PaperSummary` | — | Record: `arxiv_id`, `version`, `title`, `authors`, `abstract`, `published`, `updated`, `primary_category`, `categories` | One clean, typed shape for every caller. No URLs: code builds them from the ID |
+| `search_papers` | query string (field prefixes like `abs:`, `ti:`), `max_results` (hard cap 100), `sort_by` | `list[PaperSummary]` (empty list = no results, not an error) | Funnel top, title → ID, quick mode |
+| `get_metadata` | list of IDs, with or without version (`2401.12345`, `2401.12345v2`, old-style `hep-th/9901001`) | `dict[id → PaperSummary]`; a missing key = not found | Citation Critic, `ensure_ingested`. Batched: 14 citations = 1 request, not 14 |
+| `_request` | query params | raw XML text | Politeness and retries enforced in one place nobody can bypass. Retries 429 (rate limited, honoring `Retry-After`), 503, and timeouts with backoff (max 3); never retries 400. Per arXiv's API Terms of Use: at most 1 request every 3 s and **one connection at a time** (so parallel ingestion shares one paced client); never circumvent a block (no switching machines or IPs) |
+| `_parse_feed` | XML text | `list[PaperSummary]` | Pure, so it's testable with saved XML and no network |
+| `_split_id` | `http://arxiv.org/abs/2401.12345v2` | `("2401.12345", 2)` | Versions drive supersession |
+| `_clean` | text with newlines and double spaces | single-spaced text | Defensive. The live API returned single-line titles and abstracts (2026-10-01), but older records and other sources may contain hard line breaks |
+| `ArxivQueryError` | — | raised for a bad query | Caller's fault: the tool tells the LLM to fix the query |
+| `ArxivUnavailableError` | — | raised when arXiv is down after retries | Not the caller's fault. **The Critic must not mark a citation fake just because arXiv was down.** |
 
 ---
 

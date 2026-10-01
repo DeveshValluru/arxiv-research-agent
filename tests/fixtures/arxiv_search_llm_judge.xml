@@ -1,0 +1,247 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/7ctXq3mbdt6BAVBwZCTRU6GFO+4</id>
+  <title>arXiv Query: search_query=abs:"LLM as a judge"&amp;id_list=&amp;start=0&amp;max_results=5</title>
+  <updated>2026-10-01T07:39:32Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=abs:%22LLM+as+a+judge%22&amp;start=0&amp;max_results=5&amp;id_list=" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>5</opensearch:itemsPerPage>
+  <opensearch:totalResults>1233</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2411.15594v6</id>
+    <title>A Survey on LLM-as-a-Judge</title>
+    <updated>2025-10-19T10:32:43Z</updated>
+    <link href="https://arxiv.org/abs/2411.15594v6" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2411.15594v6" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Accurate and consistent evaluation is crucial for decision-making across numerous fields, yet it remains a challenging task due to inherent subjectivity, variability, and scale. Large Language Models (LLMs) have achieved remarkable success across diverse domains, leading to the emergence of "LLM-as-a-Judge," where LLMs are employed as evaluators for complex tasks. With their ability to process diverse data types and provide scalable, cost-effective, and consistent assessments, LLMs present a compelling alternative to traditional expert-driven evaluations. However, ensuring the reliability of LLM-as-a-Judge systems remains a significant challenge that requires careful design and standardization. This paper provides a comprehensive survey of LLM-as-a-Judge, addressing the core question: How can reliable LLM-as-a-Judge systems be built? We explore strategies to enhance reliability, including improving consistency, mitigating biases, and adapting to diverse assessment scenarios. Additionally, we propose methodologies for evaluating the reliability of LLM-as-a-Judge systems, supported by a novel benchmark designed for this purpose. To advance the development and real-world deployment of LLM-as-a-Judge systems, we also discussed practical applications, challenges, and future directions. This survey serves as a foundational reference for researchers and practitioners in this rapidly evolving field.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2024-11-23T16:03:35Z</published>
+    <arxiv:comment>Project Page: https://awesome-llm-as-a-judge.github.io/</arxiv:comment>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Jiawei Gu</name>
+    </author>
+    <author>
+      <name>Xuhui Jiang</name>
+    </author>
+    <author>
+      <name>Zhichao Shi</name>
+    </author>
+    <author>
+      <name>Hexiang Tan</name>
+    </author>
+    <author>
+      <name>Xuehao Zhai</name>
+    </author>
+    <author>
+      <name>Chengjin Xu</name>
+    </author>
+    <author>
+      <name>Wei Li</name>
+    </author>
+    <author>
+      <name>Yinghan Shen</name>
+    </author>
+    <author>
+      <name>Shengjie Ma</name>
+    </author>
+    <author>
+      <name>Honghao Liu</name>
+    </author>
+    <author>
+      <name>Saizhuo Wang</name>
+    </author>
+    <author>
+      <name>Kun Zhang</name>
+    </author>
+    <author>
+      <name>Yuanzhuo Wang</name>
+    </author>
+    <author>
+      <name>Wen Gao</name>
+    </author>
+    <author>
+      <name>Lionel Ni</name>
+    </author>
+    <author>
+      <name>Jian Guo</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2410.02736v2</id>
+    <title>Justice or Prejudice? Quantifying Biases in LLM-as-a-Judge</title>
+    <updated>2024-10-04T03:57:47Z</updated>
+    <link href="https://arxiv.org/abs/2410.02736v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2410.02736v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>LLM-as-a-Judge has been widely utilized as an evaluation method in various benchmarks and served as supervised rewards in model training. However, despite their excellence in many domains, potential issues are under-explored, undermining their reliability and the scope of their utility. Therefore, we identify 12 key potential biases and propose a new automated bias quantification framework-CALM-which systematically quantifies and analyzes each type of bias in LLM-as-a-Judge by using automated and principle-guided modification. Our experiments cover multiple popular language models, and the results indicate that while advanced models have achieved commendable overall performance, significant biases persist in certain specific tasks. Empirical results suggest that there remains room for improvement in the reliability of LLM-as-a-Judge. Moreover, we also discuss the explicit and implicit influence of these biases and give some suggestions for the reliable application of LLM-as-a-Judge. Our work highlights the need for stakeholders to address these issues and remind users to exercise caution in LLM-as-a-Judge applications.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2024-10-03T17:53:30Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Jiayi Ye</name>
+    </author>
+    <author>
+      <name>Yanbo Wang</name>
+    </author>
+    <author>
+      <name>Yue Huang</name>
+    </author>
+    <author>
+      <name>Dongping Chen</name>
+    </author>
+    <author>
+      <name>Qihui Zhang</name>
+    </author>
+    <author>
+      <name>Nuno Moniz</name>
+    </author>
+    <author>
+      <name>Tian Gao</name>
+    </author>
+    <author>
+      <name>Werner Geyer</name>
+    </author>
+    <author>
+      <name>Chao Huang</name>
+    </author>
+    <author>
+      <name>Pin-Yu Chen</name>
+    </author>
+    <author>
+      <name>Nitesh V Chawla</name>
+    </author>
+    <author>
+      <name>Xiangliang Zhang</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2410.11594v1</id>
+    <title>Black-box Uncertainty Quantification Method for LLM-as-a-Judge</title>
+    <updated>2024-10-15T13:29:22Z</updated>
+    <link href="https://arxiv.org/abs/2410.11594v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2410.11594v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>LLM-as-a-Judge is a widely used method for evaluating the performance of Large Language Models (LLMs) across various tasks. We address the challenge of quantifying the uncertainty of LLM-as-a-Judge evaluations. While uncertainty quantification has been well-studied in other domains, applying it effectively to LLMs poses unique challenges due to their complex decision-making capabilities and computational demands. In this paper, we introduce a novel method for quantifying uncertainty designed to enhance the trustworthiness of LLM-as-a-Judge evaluations. The method quantifies uncertainty by analyzing the relationships between generated assessments and possible ratings. By cross-evaluating these relationships and constructing a confusion matrix based on token probabilities, the method derives labels of high or low uncertainty. We evaluate our method across multiple benchmarks, demonstrating a strong correlation between the accuracy of LLM evaluations and the derived uncertainty scores. Our findings suggest that this method can significantly improve the reliability and consistency of LLM-as-a-Judge evaluations.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2024-10-15T13:29:22Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Nico Wagner</name>
+    </author>
+    <author>
+      <name>Michael Desmond</name>
+    </author>
+    <author>
+      <name>Rahul Nair</name>
+    </author>
+    <author>
+      <name>Zahra Ashktorab</name>
+    </author>
+    <author>
+      <name>Elizabeth M. Daly</name>
+    </author>
+    <author>
+      <name>Qian Pan</name>
+    </author>
+    <author>
+      <name>Martín Santillán Cooper</name>
+    </author>
+    <author>
+      <name>James M. Johnson</name>
+    </author>
+    <author>
+      <name>Werner Geyer</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2412.20127v3</id>
+    <title>M-MAD: Multidimensional Multi-Agent Debate for Advanced Machine Translation Evaluation</title>
+    <updated>2025-02-20T12:55:22Z</updated>
+    <link href="https://arxiv.org/abs/2412.20127v3" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2412.20127v3" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Recent advancements in large language models (LLMs) have given rise to the LLM-as-a-judge paradigm, showcasing their potential to deliver human-like judgments. However, in the field of machine translation (MT) evaluation, current LLM-as-a-judge methods fall short of learned automatic metrics. In this paper, we propose Multidimensional Multi-Agent Debate (M-MAD), a systematic LLM-based multi-agent framework for advanced LLM-as-a-judge MT evaluation. Our findings demonstrate that M-MAD achieves significant advancements by (1) decoupling heuristic MQM criteria into distinct evaluation dimensions for fine-grained assessments; (2) employing multi-agent debates to harness the collaborative reasoning capabilities of LLMs; (3) synthesizing dimension-specific results into a final evaluation judgment to ensure robust and reliable outcomes. Comprehensive experiments show that M-MAD not only outperforms all existing LLM-as-a-judge methods but also competes with state-of-the-art reference-based automatic metrics, even when powered by a suboptimal model like GPT-4o mini. Detailed ablations and analysis highlight the superiority of our framework design, offering a fresh perspective for LLM-as-a-judge paradigm. Our code and data are publicly available at https://github.com/SU-JIAYUAN/M-MAD.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2024-12-28T12:11:28Z</published>
+    <arxiv:comment>Code and data are available at https://github.com/SU-JIAYUAN/M-MAD</arxiv:comment>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Zhaopeng Feng</name>
+    </author>
+    <author>
+      <name>Jiayuan Su</name>
+    </author>
+    <author>
+      <name>Jiamei Zheng</name>
+    </author>
+    <author>
+      <name>Jiahan Ren</name>
+    </author>
+    <author>
+      <name>Yan Zhang</name>
+    </author>
+    <author>
+      <name>Jian Wu</name>
+    </author>
+    <author>
+      <name>Hongwei Wang</name>
+    </author>
+    <author>
+      <name>Zuozhu Liu</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2411.16594v7</id>
+    <title>From Generation to Judgment: Opportunities and Challenges of LLM-as-a-judge</title>
+    <updated>2025-09-29T16:52:21Z</updated>
+    <link href="https://arxiv.org/abs/2411.16594v7" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2411.16594v7" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Assessment and evaluation have long been critical challenges in artificial intelligence (AI) and natural language processing (NLP). Traditional methods, usually matching-based or small model-based, often fall short in open-ended and dynamic scenarios. Recent advancements in Large Language Models (LLMs) inspire the "LLM-as-a-judge" paradigm, where LLMs are leveraged to perform scoring, ranking, or selection for various machine learning evaluation scenarios. This paper presents a comprehensive survey of LLM-based judgment and assessment, offering an in-depth overview to review this evolving field. We first provide the definition from both input and output perspectives. Then we introduce a systematic taxonomy to explore LLM-as-a-judge along three dimensions: what to judge, how to judge, and how to benchmark. Finally, we also highlight key challenges and promising future directions for this emerging area. More resources on LLM-as-a-judge are on the website: https://llm-as-a-judge.github.io and https://github.com/llm-as-a-judge/Awesome-LLM-as-a-judge.</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2024-11-25T17:28:44Z</published>
+    <arxiv:comment>EMNLP 2025</arxiv:comment>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Dawei Li</name>
+    </author>
+    <author>
+      <name>Bohan Jiang</name>
+    </author>
+    <author>
+      <name>Liangjie Huang</name>
+    </author>
+    <author>
+      <name>Alimohammad Beigi</name>
+    </author>
+    <author>
+      <name>Chengshuai Zhao</name>
+    </author>
+    <author>
+      <name>Zhen Tan</name>
+    </author>
+    <author>
+      <name>Amrita Bhattacharjee</name>
+    </author>
+    <author>
+      <name>Yuxuan Jiang</name>
+    </author>
+    <author>
+      <name>Canyu Chen</name>
+    </author>
+    <author>
+      <name>Tianhao Wu</name>
+    </author>
+    <author>
+      <name>Kai Shu</name>
+    </author>
+    <author>
+      <name>Lu Cheng</name>
+    </author>
+    <author>
+      <name>Huan Liu</name>
+    </author>
+  </entry>
+</feed>
