@@ -18,12 +18,9 @@ The architecture is in `ARXIV_AGENT_ARCHITECTURE.md`. The financial agent (now t
 ---
 
 ## Current position
-> **PAUSED on 2026-09-30** to work on the financial agent (`../financial_agent/`).
-> Resume at **Phase 1 · Step 1.1c**: typed `PaperSummary` + parsing, built against `tests/fixtures/arxiv_search_SYNTHETIC.xml`.
-> Before resuming: send **one** live request. If it works, save a real fixture (`tests/fixtures/arxiv_search_llm_judge.xml`). If arXiv still returns 429, keep using the synthetic fixture and consider contacting arXiv support. Never circumvent the block.
-> **2026-10-01:** still 429 after 2+ hours, now with a contact User-Agent (name + email from `.env`, run with `uv run --env-file .env ...`). Plan: build 1.1c/1.1e offline; one live try per day; if still blocked, contact arXiv support (draft written in chat); if it lasts days, consider Semantic Scholar as a fallback source for search/metadata (a different service with its own terms, so not circumvention).
-> **2026-10-01 (later): access returned.** `search_papers` worked live (5 real results), and a real fixture was saved: `tests/fixtures/arxiv_search_llm_judge.xml`. Finding: real titles and abstracts came back on a single line, unlike the synthetic fixture's line breaks, so `_clean` is defensive rather than essential. The synthetic file stays as an edge-case fixture.
-> Uncommitted at pause time (check `git status` on branch `phase-1/arxiv-client`): the 1.1b client, the synthetic fixture, and doc updates.
+> **ACTIVE (resumed 2026-10-01).** The finance agent runs in a separate chat. **Phase 1 · Step 1.1c**: typed `PaperSummary` + parsing, built against the real fixture `tests/fixtures/arxiv_search_llm_judge.xml`. 1.1b is committed (`f926f28`, `d5ffe9b`).
+>
+> *History:* 2026-09-30 to 10-01, arXiv returned 429 to this machine (home and mobile networks) while its status page showed the API up; likely a shared-IP block. Access returned on 10-01. Lessons: respect the Terms of Use, never circumvent; develop on fixtures; fallback sources (OpenAlex works; Semantic Scholar needs a key) if it happens again. Runs need `uv run --env-file .env ...` so the contact User-Agent (name + email) is sent. Real titles and abstracts come back single-line, so `_clean` is defensive; the synthetic fixture stays as an edge case.
 
 ---
 
@@ -41,7 +38,7 @@ The architecture is in `ARXIV_AGENT_ARCHITECTURE.md`. The financial agent (now t
 - [ ] 1.1 arXiv API client (`src/arxiv_agent/clients/arxiv.py`, branch `phase-1/arxiv-client`)
   - [ ] 1.1a Look at a raw API response in the browser
   - [x] 1.1b First call: search, print id + title (httpx + feedparser). Blocked by arXiv 429s on 2026-09-30; **verified live on 2026-10-01**; real fixture saved (`tests/fixtures/arxiv_search_llm_judge.xml`)
-  - [ ] 1.1c Parse into a typed `PaperSummary` (clean whitespace, split id and version)
+  - [x] 1.1c Parse into a typed `PaperSummary` (clean whitespace, split id and version). Pydantic model with `extra="forbid"`; `_split_id` (regex, raises on bad IDs), `_clean`, pure `_parse_feed`; verified on real + synthetic fixtures (2026-10-02)
   - [ ] 1.1d Politeness + errors: 3-second pacing; retries on 429 (honor `Retry-After`), 503, timeouts; no retry on 400; "Error" entries (hit a real 429 during 1.1b!)
   - [ ] 1.1e Tests without the network (saved XML samples)
   - [ ] 1.1f `get_metadata(ids)` via `id_list`
@@ -117,6 +114,7 @@ The architecture is in `ARXIV_AGENT_ARCHITECTURE.md`. The financial agent (now t
 | 2026-09-29 | Tools take identifiers (arXiv IDs), never URLs; code builds every address. No agent gets a browse/fetch-URL tool | A fooled model can't point the system at an arbitrary website |
 | 2026-09-29 | Tooling: uv (src layout, package `arxiv-agent`, Python 3.12), pytest + ruff; folders mirror architecture boxes and are created just-in-time | Lockfile makes dependencies reproducible; code layout matches the diagram |
 | 2026-09-29 | Git workflow: skeleton commit on main, then one short-lived branch + PR per step; semver tags per phase milestone (v0.x); always commit uv.lock; `CHUNKER_VERSION` constant in index names; eval scores stored with git SHA + eval-set version | A version = everything needed to reproduce a behavior |
+| 2026-10-02 | Records are pydantic models with `extra="forbid"`; parsing helpers are private module-level functions (`_` prefix), not class methods | Strict contract catches typos on both sides; records stay source-agnostic so an OpenAlex client could build the same `PaperSummary` |
 | 2026-10-01 | `.gitattributes` with `* text=auto eol=lf` in every repo (do it before the first commit in new projects) | Consistent LF line endings across Windows and Linux CI; byte-exact fixtures; no noisy diffs |
 | 2026-09-30 | One git repo per project: the arXiv agent's repo is its own folder | Focused GitHub repo, README, and CI; one clean link for the CV |
 | 2026-09-30 | External API logic lives in plain clients (`clients/arxiv.py`, later `clients/semantic_scholar.py`); MCP servers are thin wrappers around them (Phase 4) | Logic testable without MCP; shared by Searcher, ingestion, and Critic |
