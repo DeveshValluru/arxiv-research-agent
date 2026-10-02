@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import time
@@ -12,6 +13,8 @@ ARXIV_API_URL = "https://export.arxiv.org/api/query"
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 BACKOFF_BASE_SECONDS = 5.0
 MIN_REQUEST_INTERVAL_SECONDS = 3.0
+
+logger = logging.getLogger(__name__)
 
 
 def _build_user_agent() -> str:
@@ -139,6 +142,13 @@ class ArxivClient:
                 problem = f"HTTP {response.status_code}"
                 wait = _retry_after_seconds(response) or wait
             if attempt < self._max_attempts:
+                logger.warning(
+                    "arXiv %s on attempt %d/%d; retrying in %.0f s",
+                    problem,
+                    attempt,
+                    self._max_attempts,
+                    wait,
+                )
                 self._sleep(wait)
         raise ArxivUnavailableError(
             f"arXiv unavailable after {self._max_attempts} attempts: {problem}"
@@ -146,6 +156,7 @@ class ArxivClient:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     client = ArxivClient()
     try:
         for paper in client.search_papers('abs:"LLM as a judge"'):

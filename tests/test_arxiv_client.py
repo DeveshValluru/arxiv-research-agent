@@ -135,3 +135,12 @@ def test_no_wait_when_enough_time_passed():
     client.search_papers("second")
 
     assert clock.waits == []
+
+
+def test_retry_is_logged(caplog):
+    clock = FakeClock()
+    client = make_client(clock, httpx.Response(429), ok())
+
+    client.search_papers("anything")
+
+    assert "arXiv HTTP 429 on attempt 1/4; retrying in 5 s" in caplog.text
