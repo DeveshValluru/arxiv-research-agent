@@ -2,3 +2,7 @@
 .env
 data/
 __pycache__/
+
+# Personal planning docs: kept local, not published
+ARXIV_AGENT_CURRICULUM.md
+ARXIV_AGENT_ARCHITECTURE.md

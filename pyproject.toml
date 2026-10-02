@@ -7,7 +7,11 @@ authors = [
     { name = "DeveshValluru", email = "devesh.valluru01@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "feedparser>=6.0.14",
+    "httpx>=0.28.1",
+    "pydantic>=2.13.5",
+]
 
 [project.scripts]
 arxiv-agent = "arxiv_agent:main"
