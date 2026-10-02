@@ -138,6 +138,8 @@ Each layer only uses the layer below it. We build bottom-up, so every layer can 
 | `_parse_feed` | XML text | `list[PaperSummary]` | Pure, so it's testable with saved XML and no network |
 | `_split_id` | `http://arxiv.org/abs/2401.12345v2` | `("2401.12345", 2)` | Versions drive supersession |
 | `_clean` | text with newlines and double spaces | single-spaced text | Defensive. The live API returned single-line titles and abstracts (2026-10-01), but older records and other sources may contain hard line breaks |
+| `ArxivClient` (decided in 1.1d) | optional `http: httpx.Client`, `sleep` | an object with `search_papers` / `get_metadata` methods | Holds **state**: one shared HTTP connection and the time of the last request (pacing). Tests inject a fake `http` (MockTransport) and a fake `sleep`, so retry and pacing logic is tested offline |
+| `ArxivError` | — | base class of both errors below | Callers can catch "any arXiv problem" with one `except`, or tell the two apart |
 | `ArxivQueryError` | — | raised for a bad query | Caller's fault: the tool tells the LLM to fix the query |
 | `ArxivUnavailableError` | — | raised when arXiv is down after retries | Not the caller's fault. **The Critic must not mark a citation fake just because arXiv was down.** |
 

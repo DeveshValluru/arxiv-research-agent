@@ -21,6 +21,18 @@ def _build_user_agent() -> str:
 USER_AGENT = _build_user_agent()
 
 
+class ArxivError(Exception):
+    pass
+
+
+class ArxivQueryError(ArxivError):
+    pass
+
+
+class ArxivUnavailableError(ArxivError):
+    pass
+
+
 class PaperSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -68,17 +80,23 @@ def _parse_feed(xml_text: str) -> list[PaperSummary]:
     return papers
 
 
-def search_papers(query: str, max_results: int = 5) -> list[PaperSummary]:
-    response = httpx.get(
-        ARXIV_API_URL,
-        params={"search_query": query, "max_results": max_results},
-        headers={"User-Agent": USER_AGENT},
-        timeout=httpx.Timeout(10.0, read=60.0),
-    )
-    response.raise_for_status()
-    return _parse_feed(response.text)
+class ArxivClient:
+    def __init__(self, http: httpx.Client | None = None) -> None:
+        self._http = http or httpx.Client(
+            headers={"User-Agent": USER_AGENT},
+            timeout=httpx.Timeout(10.0, read=60.0),
+        )
+
+    def search_papers(self, query: str, max_results: int = 5) -> list[PaperSummary]:
+        response = self._http.get(
+            ARXIV_API_URL,
+            params={"search_query": query, "max_results": max_results},
+        )
+        response.raise_for_status()
+        return _parse_feed(response.text)
 
 
 if __name__ == "__main__":
-    for paper in search_papers('abs:"LLM as a judge"'):
+    client = ArxivClient()
+    for paper in client.search_papers('abs:"LLM as a judge"'):
         print(paper.arxiv_id, f"v{paper.version}", "|", paper.title)

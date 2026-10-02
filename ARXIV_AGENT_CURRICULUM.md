@@ -39,7 +39,12 @@ The architecture is in `ARXIV_AGENT_ARCHITECTURE.md`. The financial agent (now t
   - [ ] 1.1a Look at a raw API response in the browser
   - [x] 1.1b First call: search, print id + title (httpx + feedparser). Blocked by arXiv 429s on 2026-09-30; **verified live on 2026-10-01**; real fixture saved (`tests/fixtures/arxiv_search_llm_judge.xml`)
   - [x] 1.1c Parse into a typed `PaperSummary` (clean whitespace, split id and version). Pydantic model with `extra="forbid"`; `_split_id` (regex, raises on bad IDs), `_clean`, pure `_parse_feed`; verified on real + synthetic fixtures (2026-10-02)
-  - [ ] 1.1d Politeness + errors: 3-second pacing; retries on 429 (honor `Retry-After`), 503, timeouts; no retry on 400; "Error" entries (hit a real 429 during 1.1b!)
+  - [ ] 1.1d Politeness + errors (built and tested OFFLINE with a fake arXiv; checked live later):
+    - [x] 1.1d-1 Error classes: `ArxivError` → `ArxivQueryError`, `ArxivUnavailableError`
+    - [x] 1.1d-2 `ArxivClient` class: holds one shared `httpx.Client` (injectable for tests); `search_papers` becomes a method; first pytest test with `httpx.MockTransport` (`tests/test_arxiv_client.py`)
+    - [ ] 1.1d-3 `_request` method: retries 429/503/5xx/timeouts with backoff (honor `Retry-After`), raises `ArxivQueryError` on other 4xx (no retry), `ArxivUnavailableError` after the last attempt
+    - [ ] 1.1d-4 Pacing: at least 3 s between requests (injectable `sleep` + clock, so tests don't really wait)
+    - [ ] Later, when ingestion runs in parallel: a lock so only one request is in flight (arXiv: "one connection at a time")
   - [ ] 1.1e Tests without the network (saved XML samples)
   - [ ] 1.1f `get_metadata(ids)` via `id_list`
 - [ ] 1.2 Paper parsing: arXiv HTML first, PDF fallback (benchmark Docling / Marker / GROBID); hidden-text detection
@@ -114,6 +119,7 @@ The architecture is in `ARXIV_AGENT_ARCHITECTURE.md`. The financial agent (now t
 | 2026-09-29 | Tools take identifiers (arXiv IDs), never URLs; code builds every address. No agent gets a browse/fetch-URL tool | A fooled model can't point the system at an arbitrary website |
 | 2026-09-29 | Tooling: uv (src layout, package `arxiv-agent`, Python 3.12), pytest + ruff; folders mirror architecture boxes and are created just-in-time | Lockfile makes dependencies reproducible; code layout matches the diagram |
 | 2026-09-29 | Git workflow: skeleton commit on main, then one short-lived branch + PR per step; semver tags per phase milestone (v0.x); always commit uv.lock; `CHUNKER_VERSION` constant in index names; eval scores stored with git SHA + eval-set version | A version = everything needed to reproduce a behavior |
+| 2026-10-02 | The arXiv client becomes an `ArxivClient` class (shared `httpx.Client`, last-request time, injectable `http` + `sleep`); retry/pacing logic is tested offline with `httpx.MockTransport` | Pacing needs state, which justifies a class; you can't make real arXiv return a 429 on demand, but a fake can |
 | 2026-10-02 | Records are pydantic models with `extra="forbid"`; parsing helpers are private module-level functions (`_` prefix), not class methods | Strict contract catches typos on both sides; records stay source-agnostic so an OpenAlex client could build the same `PaperSummary` |
 | 2026-10-01 | `.gitattributes` with `* text=auto eol=lf` in every repo (do it before the first commit in new projects) | Consistent LF line endings across Windows and Linux CI; byte-exact fixtures; no noisy diffs |
 | 2026-09-30 | One git repo per project: the arXiv agent's repo is its own folder | Focused GitHub repo, README, and CI; one clean link for the CV |
