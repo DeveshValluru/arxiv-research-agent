@@ -1,0 +1,71 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/D4TZhSCKsa/Lw2zxj8UGVXnQIJQ</id>
+  <title>arXiv Query: search_query=&amp;id_list=2411.15594,2499.99999&amp;start=0&amp;max_results=10</title>
+  <updated>2026-10-02T11:08:53Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=&amp;start=0&amp;max_results=10&amp;id_list=2411.15594,2499.99999" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>10</opensearch:itemsPerPage>
+  <opensearch:totalResults>1</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2411.15594v6</id>
+    <title>A Survey on LLM-as-a-Judge</title>
+    <updated>2025-10-19T10:32:43Z</updated>
+    <link href="https://arxiv.org/abs/2411.15594v6" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2411.15594v6" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Accurate and consistent evaluation is crucial for decision-making across numerous fields, yet it remains a challenging task due to inherent subjectivity, variability, and scale. Large Language Models (LLMs) have achieved remarkable success across diverse domains, leading to the emergence of "LLM-as-a-Judge," where LLMs are employed as evaluators for complex tasks. With their ability to process diverse data types and provide scalable, cost-effective, and consistent assessments, LLMs present a compelling alternative to traditional expert-driven evaluations. However, ensuring the reliability of LLM-as-a-Judge systems remains a significant challenge that requires careful design and standardization. This paper provides a comprehensive survey of LLM-as-a-Judge, addressing the core question: How can reliable LLM-as-a-Judge systems be built? We explore strategies to enhance reliability, including improving consistency, mitigating biases, and adapting to diverse assessment scenarios. Additionally, we propose methodologies for evaluating the reliability of LLM-as-a-Judge systems, supported by a novel benchmark designed for this purpose. To advance the development and real-world deployment of LLM-as-a-Judge systems, we also discussed practical applications, challenges, and future directions. This survey serves as a foundational reference for researchers and practitioners in this rapidly evolving field.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2024-11-23T16:03:35Z</published>
+    <arxiv:comment>Project Page: https://awesome-llm-as-a-judge.github.io/</arxiv:comment>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Jiawei Gu</name>
+    </author>
+    <author>
+      <name>Xuhui Jiang</name>
+    </author>
+    <author>
+      <name>Zhichao Shi</name>
+    </author>
+    <author>
+      <name>Hexiang Tan</name>
+    </author>
+    <author>
+      <name>Xuehao Zhai</name>
+    </author>
+    <author>
+      <name>Chengjin Xu</name>
+    </author>
+    <author>
+      <name>Wei Li</name>
+    </author>
+    <author>
+      <name>Yinghan Shen</name>
+    </author>
+    <author>
+      <name>Shengjie Ma</name>
+    </author>
+    <author>
+      <name>Honghao Liu</name>
+    </author>
+    <author>
+      <name>Saizhuo Wang</name>
+    </author>
+    <author>
+      <name>Kun Zhang</name>
+    </author>
+    <author>
+      <name>Yuanzhuo Wang</name>
+    </author>
+    <author>
+      <name>Wen Gao</name>
+    </author>
+    <author>
+      <name>Lionel Ni</name>
+    </author>
+    <author>
+      <name>Jian Guo</name>
+    </author>
+  </entry>
+</feed>

@@ -13,6 +13,10 @@ ARXIV_API_URL = "https://export.arxiv.org/api/query"
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 BACKOFF_BASE_SECONDS = 5.0
 MIN_REQUEST_INTERVAL_SECONDS = 3.0
+METADATA_BATCH_SIZE = 50
+ARXIV_ID_PATTERN = re.compile(
+    r"^(?:\d{4}\.\d{4,5}|[a-z][a-z-]*(?:\.[A-Z]{2})?/\d{7})(?:v\d+)?$"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +92,13 @@ def _parse_feed(xml_text: str) -> list[PaperSummary]:
     return papers
 
 
+def _error_message(response: httpx.Response) -> str:
+    for entry in feedparser.parse(response.text).entries:
+        if entry.get("title") == "Error":
+            return entry.get("summary", "")
+    return ""
+
+
 def _retry_after_seconds(response: httpx.Response) -> float | None:
     value = response.headers.get("Retry-After")
     if value is None or not value.isdigit():
@@ -116,6 +127,16 @@ class ArxivClient:
         xml = self._request({"search_query": query, "max_results": max_results})
         return _parse_feed(xml)
 
+    def get_metadata(self, ids: list[str]) -> dict[str, PaperSummary]:
+        valid_ids = [i for i in dict.fromkeys(ids) if ARXIV_ID_PATTERN.match(i)]
+        found: dict[str, PaperSummary] = {}
+        for start in range(0, len(valid_ids), METADATA_BATCH_SIZE):
+            batch = valid_ids[start : start + METADATA_BATCH_SIZE]
+            xml = self._request({"id_list": ",".join(batch), "max_results": len(batch)})
+            for paper in _parse_feed(xml):
+                found[paper.arxiv_id] = paper
+        return found
+
     def _pace(self) -> None:
         if self._last_request_at is not None:
             elapsed = self._clock() - self._last_request_at
@@ -136,9 +157,11 @@ class ArxivClient:
                 if response.status_code == 200:
                     return response.text
                 if response.status_code not in RETRYABLE_STATUSES:
-                    raise ArxivQueryError(
-                        f"arXiv rejected the request: HTTP {response.status_code}"
-                    )
+                    message = f"arXiv rejected the request: HTTP {response.status_code}"
+                    detail = _error_message(response)
+                    if detail:
+                        message += f": {detail}"
+                    raise ArxivQueryError(message)
                 problem = f"HTTP {response.status_code}"
                 wait = _retry_after_seconds(response) or wait
             if attempt < self._max_attempts:

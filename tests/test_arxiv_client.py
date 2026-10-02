@@ -11,6 +11,14 @@ from arxiv_agent.clients.arxiv import (
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SEARCH_XML = (FIXTURES / "arxiv_search_llm_judge.xml").read_text(encoding="utf-8")
+IDLIST_XML = (FIXTURES / "arxiv_idlist_found_and_unknown.xml").read_text(
+    encoding="utf-8"
+)
+MALFORMED_400_XML = (FIXTURES / "arxiv_idlist_malformed_400.xml").read_text(
+    encoding="utf-8"
+)
+EMPTY_FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>no results</title></feed>"""
 
 
 class FakeClock:
@@ -30,10 +38,19 @@ def ok() -> httpx.Response:
     return httpx.Response(200, text=SEARCH_XML)
 
 
-def fake_arxiv(*responses: httpx.Response | Exception) -> httpx.Client:
+def empty() -> httpx.Response:
+    return httpx.Response(200, text=EMPTY_FEED)
+
+
+def fake_arxiv(
+    *responses: httpx.Response | Exception,
+    seen: list[httpx.Request] | None = None,
+) -> httpx.Client:
     queue = list(responses)
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if seen is not None:
+            seen.append(request)
         item = queue.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -43,9 +60,13 @@ def fake_arxiv(*responses: httpx.Response | Exception) -> httpx.Client:
 
 
 def make_client(
-    clock: FakeClock, *responses: httpx.Response | Exception
+    clock: FakeClock,
+    *responses: httpx.Response | Exception,
+    seen: list[httpx.Request] | None = None,
 ) -> ArxivClient:
-    return ArxivClient(http=fake_arxiv(*responses), sleep=clock.sleep, clock=clock.time)
+    return ArxivClient(
+        http=fake_arxiv(*responses, seen=seen), sleep=clock.sleep, clock=clock.time
+    )
 
 
 def test_search_returns_parsed_papers():
@@ -144,3 +165,43 @@ def test_retry_is_logged(caplog):
     client.search_papers("anything")
 
     assert "arXiv HTTP 429 on attempt 1/4; retrying in 5 s" in caplog.text
+
+
+def test_get_metadata_omits_unknown_ids():
+    seen = []
+    client = make_client(FakeClock(), httpx.Response(200, text=IDLIST_XML), seen=seen)
+
+    found = client.get_metadata(["2411.15594", "2499.99999", "2411.15594"])
+
+    assert set(found) == {"2411.15594"}
+    assert found["2411.15594"].title == "A Survey on LLM-as-a-Judge"
+    assert len(seen) == 1
+    assert seen[0].url.params["id_list"] == "2411.15594,2499.99999"
+
+
+def test_get_metadata_never_sends_malformed_ids():
+    seen = []
+    client = make_client(FakeClock(), seen=seen)
+
+    found = client.get_metadata(["not-an-id", "24ll.1559"])
+
+    assert found == {}
+    assert seen == []
+
+
+def test_get_metadata_batches_and_sets_max_results():
+    seen = []
+    ids = [f"2401.{n:05d}" for n in range(120)]
+    client = make_client(FakeClock(), empty(), empty(), empty(), seen=seen)
+
+    client.get_metadata(ids)
+
+    assert [len(r.url.params["id_list"].split(",")) for r in seen] == [50, 50, 20]
+    assert [r.url.params["max_results"] for r in seen] == ["50", "50", "20"]
+
+
+def test_bad_request_includes_arxiv_explanation():
+    client = make_client(FakeClock(), httpx.Response(400, text=MALFORMED_400_XML))
+
+    with pytest.raises(ArxivQueryError, match="incorrect id format for not-an-id"):
+        client.search_papers("anything")
