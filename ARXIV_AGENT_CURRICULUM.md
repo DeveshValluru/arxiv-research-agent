@@ -43,7 +43,7 @@ The architecture is in `ARXIV_AGENT_ARCHITECTURE.md`. The financial agent (now t
     - [x] 1.1d-1 Error classes: `ArxivError` → `ArxivQueryError`, `ArxivUnavailableError`
     - [x] 1.1d-2 `ArxivClient` class: holds one shared `httpx.Client` (injectable for tests); `search_papers` becomes a method; first pytest test with `httpx.MockTransport` (`tests/test_arxiv_client.py`)
     - [x] 1.1d-3 `_request` method (6 offline tests passing): retries 429/503/5xx/timeouts with backoff (honor `Retry-After`), raises `ArxivQueryError` on other 4xx (no retry), `ArxivUnavailableError` after the last attempt
-    - [ ] 1.1d-4 Pacing: at least 3 s between requests (injectable `sleep` + clock, so tests don't really wait)
+    - [x] 1.1d-4 Pacing: at least 3 s between requests (injectable `sleep` + `clock`; tests use a `FakeClock` whose sleep advances its own time). 9 offline tests passing
     - [ ] Later, when ingestion runs in parallel: a lock so only one request is in flight (arXiv: "one connection at a time")
   - [ ] 1.1e Tests without the network (saved XML samples)
   - [ ] 1.1f `get_metadata(ids)` via `id_list`

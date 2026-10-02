@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 BACKOFF_BASE_SECONDS = 5.0
+MIN_REQUEST_INTERVAL_SECONDS = 3.0
 
 
 def _build_user_agent() -> str:
@@ -97,6 +98,7 @@ class ArxivClient:
         http: httpx.Client | None = None,
         max_attempts: int = 4,
         sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._http = http or httpx.Client(
             headers={"User-Agent": USER_AGENT},
@@ -104,15 +106,25 @@ class ArxivClient:
         )
         self._max_attempts = max_attempts
         self._sleep = sleep
+        self._clock = clock
+        self._last_request_at: float | None = None
 
     def search_papers(self, query: str, max_results: int = 5) -> list[PaperSummary]:
         xml = self._request({"search_query": query, "max_results": max_results})
         return _parse_feed(xml)
 
+    def _pace(self) -> None:
+        if self._last_request_at is not None:
+            elapsed = self._clock() - self._last_request_at
+            if elapsed < MIN_REQUEST_INTERVAL_SECONDS:
+                self._sleep(MIN_REQUEST_INTERVAL_SECONDS - elapsed)
+        self._last_request_at = self._clock()
+
     def _request(self, params: dict[str, str | int]) -> str:
         problem = ""
         for attempt in range(1, self._max_attempts + 1):
             wait = BACKOFF_BASE_SECONDS * 2 ** (attempt - 1)
+            self._pace()
             try:
                 response = self._http.get(ARXIV_API_URL, params=params)
             except httpx.TransportError as exc:
@@ -135,5 +147,8 @@ class ArxivClient:
 
 if __name__ == "__main__":
     client = ArxivClient()
-    for paper in client.search_papers('abs:"LLM as a judge"'):
-        print(paper.arxiv_id, f"v{paper.version}", "|", paper.title)
+    try:
+        for paper in client.search_papers('abs:"LLM as a judge"'):
+            print(paper.arxiv_id, f"v{paper.version}", "|", paper.title)
+    except ArxivUnavailableError as exc:
+        print(f"arXiv is unavailable right now: {exc}")
