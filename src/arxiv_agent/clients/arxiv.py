@@ -1,5 +1,7 @@
 import os
 import re
+import time
+from collections.abc import Callable
 from datetime import datetime
 
 import feedparser
@@ -7,6 +9,8 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
+RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+BACKOFF_BASE_SECONDS = 5.0
 
 
 def _build_user_agent() -> str:
@@ -80,20 +84,53 @@ def _parse_feed(xml_text: str) -> list[PaperSummary]:
     return papers
 
 
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    value = response.headers.get("Retry-After")
+    if value is None or not value.isdigit():
+        return None
+    return float(value)
+
+
 class ArxivClient:
-    def __init__(self, http: httpx.Client | None = None) -> None:
+    def __init__(
+        self,
+        http: httpx.Client | None = None,
+        max_attempts: int = 4,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._http = http or httpx.Client(
             headers={"User-Agent": USER_AGENT},
             timeout=httpx.Timeout(10.0, read=60.0),
         )
+        self._max_attempts = max_attempts
+        self._sleep = sleep
 
     def search_papers(self, query: str, max_results: int = 5) -> list[PaperSummary]:
-        response = self._http.get(
-            ARXIV_API_URL,
-            params={"search_query": query, "max_results": max_results},
+        xml = self._request({"search_query": query, "max_results": max_results})
+        return _parse_feed(xml)
+
+    def _request(self, params: dict[str, str | int]) -> str:
+        problem = ""
+        for attempt in range(1, self._max_attempts + 1):
+            wait = BACKOFF_BASE_SECONDS * 2 ** (attempt - 1)
+            try:
+                response = self._http.get(ARXIV_API_URL, params=params)
+            except httpx.TransportError as exc:
+                problem = f"network error ({type(exc).__name__})"
+            else:
+                if response.status_code == 200:
+                    return response.text
+                if response.status_code not in RETRYABLE_STATUSES:
+                    raise ArxivQueryError(
+                        f"arXiv rejected the request: HTTP {response.status_code}"
+                    )
+                problem = f"HTTP {response.status_code}"
+                wait = _retry_after_seconds(response) or wait
+            if attempt < self._max_attempts:
+                self._sleep(wait)
+        raise ArxivUnavailableError(
+            f"arXiv unavailable after {self._max_attempts} attempts: {problem}"
         )
-        response.raise_for_status()
-        return _parse_feed(response.text)
 
 
 if __name__ == "__main__":

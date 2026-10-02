@@ -42,7 +42,7 @@ The architecture is in `ARXIV_AGENT_ARCHITECTURE.md`. The financial agent (now t
   - [ ] 1.1d Politeness + errors (built and tested OFFLINE with a fake arXiv; checked live later):
     - [x] 1.1d-1 Error classes: `ArxivError` → `ArxivQueryError`, `ArxivUnavailableError`
     - [x] 1.1d-2 `ArxivClient` class: holds one shared `httpx.Client` (injectable for tests); `search_papers` becomes a method; first pytest test with `httpx.MockTransport` (`tests/test_arxiv_client.py`)
-    - [ ] 1.1d-3 `_request` method: retries 429/503/5xx/timeouts with backoff (honor `Retry-After`), raises `ArxivQueryError` on other 4xx (no retry), `ArxivUnavailableError` after the last attempt
+    - [x] 1.1d-3 `_request` method (6 offline tests passing): retries 429/503/5xx/timeouts with backoff (honor `Retry-After`), raises `ArxivQueryError` on other 4xx (no retry), `ArxivUnavailableError` after the last attempt
     - [ ] 1.1d-4 Pacing: at least 3 s between requests (injectable `sleep` + clock, so tests don't really wait)
     - [ ] Later, when ingestion runs in parallel: a lock so only one request is in flight (arXiv: "one connection at a time")
   - [ ] 1.1e Tests without the network (saved XML samples)
