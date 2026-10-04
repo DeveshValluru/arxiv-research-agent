@@ -177,3 +177,21 @@ def test_no_text_is_lost():
     words_in = f"{PAPER.abstract} {sections_text}".split()
     words_out = " ".join(c.text for c in CHUNKS if c.kind != "table").split()
     assert words_out == words_in
+
+
+REAL_PAGE = Path(__file__).parent.parent / "data" / "html" / "2411.15594v6.html"
+
+
+@pytest.mark.skipif(not REAL_PAGE.exists(), reason="real page not downloaded")
+def test_real_paper_chunks():
+    paper = parse_arxiv_html(REAL_PAGE.read_text(encoding="utf-8"))
+    chunks = chunk_paper(paper, "2411.15594", 6)
+
+    sections_text = " ".join(s.text for s in paper.sections)
+    words_in = f"{paper.abstract} {sections_text}".split()
+    words_out = " ".join(c.text for c in chunks if c.kind != "table").split()
+
+    assert words_out == words_in
+    assert all(c.token_count <= 512 for c in chunks)
+    assert [c.kind for c in chunks[:2]] == ["abstract", "abstract"]
+    assert sum(c.kind == "table" for c in chunks) == 4
