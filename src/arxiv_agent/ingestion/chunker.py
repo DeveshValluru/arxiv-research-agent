@@ -1,7 +1,7 @@
 import math
 import re
 
-from arxiv_agent.ingestion.models import Section
+from arxiv_agent.ingestion.models import Chunk, ParsedPaper, Section
 
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 ABBREVIATIONS = (
@@ -18,6 +18,8 @@ ABBREVIATIONS = (
     "cf.",
     "etc.",
 )
+MAX_TOKENS = 350
+CHUNKER_VERSION = 1
 
 
 def _approx_tokens(text: str) -> int:
@@ -79,3 +81,59 @@ def _chunk_texts(text: str, max_tokens: int) -> list[str]:
 
     chunks.extend(_pack(small, max_tokens, "\n\n"))
     return chunks
+
+
+def _with_header(title: str, path: list[str], body: str) -> str:
+    return f"{title}\n{' > '.join(path)}\n\n{body}"
+
+
+def chunk_paper(
+    paper: ParsedPaper,
+    arxiv_id: str,
+    version: int,
+    max_tokens: int = MAX_TOKENS,
+) -> list[Chunk]:
+    pieces: list[tuple[str, list[str], str, str]] = []
+
+    if paper.abstract:
+        for text in _chunk_texts(paper.abstract, max_tokens):
+            pieces.append(
+                (
+                    "abstract",
+                    ["Abstract"],
+                    text,
+                    _with_header(paper.title, ["Abstract"], text),
+                )
+            )
+
+    for section, path in zip(paper.sections, _section_paths(paper.sections)):
+        if not section.text:
+            continue
+
+        for text in _chunk_texts(section.text, max_tokens):
+            pieces.append(("text", path, text, _with_header(paper.title, path, text)))
+
+    for table in paper.tables:
+        path = [table.section] if table.section else []
+        columns = table.markdown.split("\n")[0]
+        text = f"{table.caption}\n\n{table.markdown}"
+        description = f"{table.caption}\nColumns: {columns}"
+        pieces.append(
+            ("table", path, text, _with_header(paper.title, path, description))
+        )
+
+    return [
+        Chunk(
+            chunk_id=f"{arxiv_id}v{version}:{index:04d}",
+            arxiv_id=arxiv_id,
+            version=version,
+            index=index,
+            kind=kind,
+            section_path=path,
+            text=text,
+            embed_text=embed_text,
+            token_count=_approx_tokens(embed_text),
+            chunker_version=CHUNKER_VERSION,
+        )
+        for index, (kind, path, text, embed_text) in enumerate(pieces)
+    ]

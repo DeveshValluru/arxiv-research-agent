@@ -8,6 +8,7 @@ from arxiv_agent.ingestion.chunker import (
     _pack,
     _section_paths,
     _split_sentences,
+    chunk_paper,
 )
 from arxiv_agent.ingestion.html_parser import parse_arxiv_html
 
@@ -114,3 +115,65 @@ def test_chunk_texts_never_loses_words_and_respects_limit():
 
     assert " ".join(chunks).split() == text.split()
     assert all(_approx_tokens(chunk) <= 20 for chunk in chunks)
+
+
+CHUNKS = chunk_paper(PAPER, "2499.00001", 1)
+
+
+def test_abstract_is_first_chunk():
+    first = CHUNKS[0]
+    assert first.kind == "abstract"
+    assert first.index == 0
+    assert first.text == "We study how language models grade other models."
+
+
+def test_chunk_ids_are_numbered_and_stable():
+    assert [c.chunk_id for c in CHUNKS[:3]] == [
+        "2499.00001v1:0000",
+        "2499.00001v1:0001",
+        "2499.00001v1:0002",
+    ]
+    again = chunk_paper(PAPER, "2499.00001", 1)
+    assert [c.chunk_id for c in again] == [c.chunk_id for c in CHUNKS]
+
+
+def test_text_chunks_carry_their_section_path():
+    swapping = next(c for c in CHUNKS if "Swapping the order" in c.text)
+    assert swapping.kind == "text"
+    assert swapping.section_path == [
+        "2. Method",
+        "2.1. Position Bias",
+        "2.1.1. Swapping",
+    ]
+
+
+def test_embed_text_has_context_header_but_text_does_not():
+    swapping = next(c for c in CHUNKS if "Swapping the order" in c.text)
+    assert swapping.embed_text.startswith(
+        "Judging the Judges: A Tiny Test Paper\n"
+        "2. Method > 2.1. Position Bias > 2.1.1. Swapping\n\n"
+    )
+    assert not swapping.text.startswith("Judging the Judges")
+
+
+def test_table_is_one_chunk_with_caption_and_markdown():
+    [table] = [c for c in CHUNKS if c.kind == "table"]
+    assert table.section_path == ["2. Method"]
+    assert table.text.startswith("Table 1. Judge agreement with humans.")
+    assert "| GPT-4 | 85% |" in table.text
+    assert "Columns: | Judge | Agreement |" in table.embed_text
+    assert "85%" not in table.embed_text
+
+
+def test_empty_abstract_makes_no_chunk():
+    no_abstract = PAPER.model_copy(update={"abstract": ""})
+    chunks = chunk_paper(no_abstract, "2499.00001", 1)
+    assert all(c.kind != "abstract" for c in chunks)
+    assert all(c.text for c in chunks)
+
+
+def test_no_text_is_lost():
+    sections_text = " ".join(s.text for s in PAPER.sections)
+    words_in = f"{PAPER.abstract} {sections_text}".split()
+    words_out = " ".join(c.text for c in CHUNKS if c.kind != "table").split()
+    assert words_out == words_in
