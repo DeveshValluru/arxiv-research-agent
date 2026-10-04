@@ -33,3 +33,4 @@ class ParsedPaper(BaseModel):
     sections: list[Section]
     tables: list[Table]
     references: list[Reference]
+    hidden_text: list[str]
