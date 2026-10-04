@@ -205,3 +205,43 @@ def test_bad_request_includes_arxiv_explanation():
 
     with pytest.raises(ArxivQueryError, match="incorrect id format for not-an-id"):
         client.search_papers("anything")
+
+
+def test_fetch_html_returns_page():
+    seen = []
+    page = "<html><body><h1>A Survey on LLM-as-a-Judge</h1></body></html>"
+    client = make_client(FakeClock(), httpx.Response(200, text=page), seen=seen)
+
+    html = client.fetch_html("2411.15594", version=6)
+
+    assert html == page
+    assert str(seen[0].url) == "https://arxiv.org/html/2411.15594v6"
+
+
+def test_fetch_html_without_version_asks_for_latest():
+    seen = []
+    client = make_client(FakeClock(), httpx.Response(200, text="<html/>"), seen=seen)
+
+    client.fetch_html("2411.15594")
+
+    assert str(seen[0].url) == "https://arxiv.org/html/2411.15594"
+
+
+def test_fetch_html_returns_none_when_missing():
+    clock = FakeClock()
+    seen = []
+    client = make_client(clock, httpx.Response(404), seen=seen)
+
+    assert client.fetch_html("2411.15594", version=6) is None
+    assert len(seen) == 1
+    assert clock.waits == []
+
+
+@pytest.mark.parametrize("bad_id", ["2411.15594v6", "not-an-id", " 2411.15594"])
+def test_fetch_html_rejects_non_bare_ids(bad_id):
+    seen = []
+    client = make_client(FakeClock(), seen=seen)
+
+    with pytest.raises(ValueError):
+        client.fetch_html(bad_id)
+    assert seen == []
