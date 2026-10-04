@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from arxiv_agent.ingestion.chunker import _approx_tokens, _section_paths
+import pytest
+
+from arxiv_agent.ingestion.chunker import (
+    _approx_tokens,
+    _section_paths,
+    _split_sentences,
+)
 from arxiv_agent.ingestion.html_parser import parse_arxiv_html
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -21,4 +27,32 @@ def test_section_paths_follow_nesting():
         ["2. Method"],
         ["2. Method", "2.1. Position Bias"],
         ["2. Method", "2.1. Position Bias", "2.1.1. Swapping"],
+    ]
+
+
+def test_split_sentences_basic():
+    assert _split_sentences("First sentence. Second one! Third? Fourth.") == [
+        "First sentence.",
+        "Second one!",
+        "Third?",
+        "Fourth.",
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Judges were studied by Zheng et al. (2023) in detail.",
+        "Strong judges, e.g. GPT-4, agree with humans.",
+        "As shown in Fig. 2 and Eq. 3, the gap is small.",
+    ],
+)
+def test_split_sentences_respects_abbreviations(text):
+    assert _split_sentences(text) == [text]
+
+
+def test_split_sentences_keeps_decimals():
+    assert _split_sentences("Agreement rose from 0.72 to 0.85. Bias fell.") == [
+        "Agreement rose from 0.72 to 0.85.",
+        "Bias fell.",
     ]
