@@ -1,5 +1,6 @@
 import math
 import re
+
 from arxiv_agent.ingestion.models import Section
 
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
@@ -43,3 +44,22 @@ def _split_sentences(text: str) -> list[str]:
             sentences.append(piece)
 
     return sentences
+
+
+def _pack(units: list[str], max_tokens: int, separator: str) -> list[str]:
+    chunks: list[str] = []
+    current: list[str] = []
+
+    for unit in units:
+        candidate = separator.join(current + [unit])
+
+        if current and _approx_tokens(candidate) > max_tokens:
+            chunks.append(separator.join(current))
+            current = [unit]
+
+        else:
+            current.append(unit)
+
+    if current:
+        chunks.append(separator.join(current))
+    return chunks
