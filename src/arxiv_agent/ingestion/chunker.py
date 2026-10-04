@@ -63,3 +63,19 @@ def _pack(units: list[str], max_tokens: int, separator: str) -> list[str]:
     if current:
         chunks.append(separator.join(current))
     return chunks
+
+
+def _chunk_texts(text: str, max_tokens: int) -> list[str]:
+    chunks: list[str] = []
+    small: list[str] = []
+
+    for paragraph in text.split("\n\n"):
+        if _approx_tokens(paragraph) <= max_tokens:
+            small.append(paragraph)
+        else:
+            chunks.extend(_pack(small, max_tokens, "\n\n"))
+            small = []
+            chunks.extend(_pack(_split_sentences(paragraph), max_tokens, " "))
+
+    chunks.extend(_pack(small, max_tokens, "\n\n"))
+    return chunks
