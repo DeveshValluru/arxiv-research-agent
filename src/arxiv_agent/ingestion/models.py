@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -34,3 +36,18 @@ class ParsedPaper(BaseModel):
     tables: list[Table]
     references: list[Reference]
     hidden_text: list[str]
+
+
+class Chunk(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chunk_id: str
+    arxiv_id: str
+    version: int
+    index: int
+    kind: Literal["abstract", "text", "table"]
+    section_path: list[str]
+    text: str
+    embed_text: str
+    token_count: int
+    chunker_version: int
