@@ -1,6 +1,8 @@
+import re
+
 from bs4 import BeautifulSoup, Tag
 
-from arxiv_agent.ingestion.models import ParsedPaper, Section
+from arxiv_agent.ingestion.models import ParsedPaper, Reference, Section, Table
 
 SECTION_LEVELS = {
     "ltx_section": 1,
@@ -9,10 +11,12 @@ SECTION_LEVELS = {
     "ltx_subsubsection": 3,
     "ltx_paragraph": 4,
 }
+ARXIV_ID_IN_URL = re.compile(r"arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{4,5})")
+ARXIV_ID_IN_TEXT = re.compile(r"arXiv[:\s]*(\d{4}\.\d{4,5})", re.IGNORECASE)
 
 
-def _text(tag: Tag) -> str:
-    return " ".join(tag.get_text().split())
+def _text(tag: Tag, separator: str = "") -> str:
+    return " ".join(tag.get_text(separator).split())
 
 
 def _section_level(section: Tag) -> int | None:
@@ -20,6 +24,13 @@ def _section_level(section: Tag) -> int | None:
         if css_class in SECTION_LEVELS:
             return SECTION_LEVELS[css_class]
     return None
+
+
+def _section_title(section: Tag | None) -> str:
+    if section is None:
+        return ""
+    heading = section.find(class_="ltx_title", recursive=False)
+    return _text(heading) if heading else ""
 
 
 def _own_paragraphs(section: Tag) -> list[Tag]:
@@ -31,6 +42,77 @@ def _own_paragraphs(section: Tag) -> list[Tag]:
     ]
 
 
+def _replace_math_with_latex(soup: BeautifulSoup) -> None:
+    for math in soup.find_all("math"):
+        latex = math.get("alttext", "").replace("\\displaystyle", "").strip()
+        math.replace_with(f"${latex}$" if latex else "")
+
+
+def _parse_sections(soup: BeautifulSoup) -> list[Section]:
+    sections = []
+    for section in soup.find_all("section"):
+        level = _section_level(section)
+        if level is None or section.find_parent("div", class_="ltx_abstract"):
+            continue
+        sections.append(
+            Section(
+                title=_section_title(section),
+                level=level,
+                text="\n\n".join(_text(p) for p in _own_paragraphs(section)),
+            )
+        )
+    return sections
+
+
+def _table_markdown(figure: Tag) -> str:
+    rows = [
+        [_text(cell).replace("|", "\\|") for cell in tr.select(".ltx_td, .ltx_th")]
+        for tr in figure.select(".ltx_tr")
+    ]
+    if not rows:
+        return ""
+    lines = ["| " + " | ".join(row) + " |" for row in rows]
+    lines.insert(1, "|" + " --- |" * len(rows[0]))
+    return "\n".join(lines)
+
+
+def _parse_tables(soup: BeautifulSoup) -> list[Table]:
+    tables = []
+    for figure in soup.select("figure.ltx_table"):
+        caption = figure.find("figcaption")
+        tables.append(
+            Table(
+                section=_section_title(figure.find_parent("section")),
+                caption=_text(caption) if caption else "",
+                markdown=_table_markdown(figure),
+            )
+        )
+    return tables
+
+
+def _find_arxiv_id(item: Tag, text: str) -> str | None:
+    for link in item.select("a[href]"):
+        if match := ARXIV_ID_IN_URL.search(link["href"]):
+            return match.group(1)
+    if match := ARXIV_ID_IN_TEXT.search(text):
+        return match.group(1)
+    return None
+
+
+def _parse_references(soup: BeautifulSoup) -> list[Reference]:
+    references = []
+    for item in soup.select("li.ltx_bibitem"):
+        text = _text(item, separator=" ")
+        references.append(
+            Reference(
+                ref_id=item.get("id", ""),
+                text=text,
+                arxiv_id=_find_arxiv_id(item, text),
+            )
+        )
+    return references
+
+
 def parse_arxiv_html(html: str) -> ParsedPaper:
     soup = BeautifulSoup(html, "lxml")
 
@@ -38,23 +120,17 @@ def parse_arxiv_html(html: str) -> ParsedPaper:
     if title_tag is None:
         raise ValueError("not an arXiv HTML paper: no document title found")
 
+    _replace_math_with_latex(soup)
+
     abstract_tag = soup.select_one("div.ltx_abstract")
     abstract = ""
     if abstract_tag is not None:
         abstract = "\n\n".join(_text(p) for p in abstract_tag.select("p.ltx_p"))
 
-    sections = []
-    for section in soup.find_all("section"):
-        level = _section_level(section)
-        if level is None or section.find_parent("div", class_="ltx_abstract"):
-            continue
-        heading = section.find(class_="ltx_title", recursive=False)
-        sections.append(
-            Section(
-                title=_text(heading) if heading else "",
-                level=level,
-                text="\n\n".join(_text(p) for p in _own_paragraphs(section)),
-            )
-        )
-
-    return ParsedPaper(title=_text(title_tag), abstract=abstract, sections=sections)
+    return ParsedPaper(
+        title=_text(title_tag),
+        abstract=abstract,
+        sections=_parse_sections(soup),
+        tables=_parse_tables(soup),
+        references=_parse_references(soup),
+    )
