@@ -10,13 +10,14 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
+ARXIV_HTML_BASE = "https://arxiv.org/html/"
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 BACKOFF_BASE_SECONDS = 5.0
 MIN_REQUEST_INTERVAL_SECONDS = 3.0
 METADATA_BATCH_SIZE = 50
-ARXIV_ID_PATTERN = re.compile(
-    r"^(?:\d{4}\.\d{4,5}|[a-z][a-z-]*(?:\.[A-Z]{2})?/\d{7})(?:v\d+)?$"
-)
+_BARE_ID = r"(?:\d{4}\.\d{4,5}|[a-z][a-z-]*(?:\.[A-Z]{2})?/\d{7})"
+BARE_ARXIV_ID_PATTERN = re.compile(rf"^{_BARE_ID}$")
+ARXIV_ID_PATTERN = re.compile(rf"^{_BARE_ID}(?:v\d+)?$")
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,10 @@ class ArxivError(Exception):
 
 
 class ArxivQueryError(ArxivError):
+    pass
+
+
+class ArxivNotFoundError(ArxivQueryError):
     pass
 
 
@@ -117,6 +122,7 @@ class ArxivClient:
         self._http = http or httpx.Client(
             headers={"User-Agent": USER_AGENT},
             timeout=httpx.Timeout(10.0, read=60.0),
+            follow_redirects=True,
         )
         self._max_attempts = max_attempts
         self._sleep = sleep
@@ -124,7 +130,9 @@ class ArxivClient:
         self._last_request_at: float | None = None
 
     def search_papers(self, query: str, max_results: int = 5) -> list[PaperSummary]:
-        xml = self._request({"search_query": query, "max_results": max_results})
+        xml = self._request(
+            ARXIV_API_URL, {"search_query": query, "max_results": max_results}
+        )
         return _parse_feed(xml)
 
     def get_metadata(self, ids: list[str]) -> dict[str, PaperSummary]:
@@ -132,10 +140,23 @@ class ArxivClient:
         found: dict[str, PaperSummary] = {}
         for start in range(0, len(valid_ids), METADATA_BATCH_SIZE):
             batch = valid_ids[start : start + METADATA_BATCH_SIZE]
-            xml = self._request({"id_list": ",".join(batch), "max_results": len(batch)})
+            xml = self._request(
+                ARXIV_API_URL, {"id_list": ",".join(batch), "max_results": len(batch)}
+            )
             for paper in _parse_feed(xml):
                 found[paper.arxiv_id] = paper
         return found
+
+    def fetch_html(self, arxiv_id: str, version: int | None = None) -> str | None:
+        if not BARE_ARXIV_ID_PATTERN.match(arxiv_id):
+            raise ValueError(
+                f"expected a bare arXiv id like 2411.15594, got {arxiv_id!r}"
+            )
+        path = f"{arxiv_id}v{version}" if version else arxiv_id
+        try:
+            return self._request(ARXIV_HTML_BASE + path)
+        except ArxivNotFoundError:
+            return None
 
     def _pace(self) -> None:
         if self._last_request_at is not None:
@@ -144,18 +165,20 @@ class ArxivClient:
                 self._sleep(MIN_REQUEST_INTERVAL_SECONDS - elapsed)
         self._last_request_at = self._clock()
 
-    def _request(self, params: dict[str, str | int]) -> str:
+    def _request(self, url: str, params: dict[str, str | int] | None = None) -> str:
         problem = ""
         for attempt in range(1, self._max_attempts + 1):
             wait = BACKOFF_BASE_SECONDS * 2 ** (attempt - 1)
             self._pace()
             try:
-                response = self._http.get(ARXIV_API_URL, params=params)
+                response = self._http.get(url, params=params)
             except httpx.TransportError as exc:
                 problem = f"network error ({type(exc).__name__})"
             else:
                 if response.status_code == 200:
                     return response.text
+                if response.status_code == 404:
+                    raise ArxivNotFoundError(f"arXiv has nothing at {response.url}")
                 if response.status_code not in RETRYABLE_STATUSES:
                     message = f"arXiv rejected the request: HTTP {response.status_code}"
                     detail = _error_message(response)
