@@ -1,7 +1,11 @@
 import numpy as np
 import pytest
 
-from arxiv_agent.ingestion.embedder import BGE_QUERY_PREFIX, Embedder
+from arxiv_agent.ingestion.embedder import (
+    BGE_QUERY_PREFIX,
+    Embedder,
+    load_token_counter,
+)
 
 
 @pytest.fixture(scope="module")
@@ -16,6 +20,13 @@ def test_describes_itself(embedder):
 
 def test_count_tokens_includes_special_tokens(embedder):
     assert embedder.count_tokens("LLM judges prefer the first answer.") == 10
+
+
+def test_token_counter_matches_the_embedder_without_loading_the_model(embedder):
+    count_tokens = load_token_counter("BAAI/bge-small-en-v1.5")
+    texts = ["LLM judges prefer the first answer.", "$\\Delta b = 0.3$", ""]
+
+    assert [count_tokens(t) for t in texts] == [embedder.count_tokens(t) for t in texts]
 
 
 def test_passages_are_normalized_vectors(embedder):

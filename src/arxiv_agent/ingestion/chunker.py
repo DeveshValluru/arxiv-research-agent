@@ -21,6 +21,10 @@ ABBREVIATIONS = (
 )
 MAX_TOKENS = 350
 CHUNKER_VERSION = 3
+# Stored chunks are shared by every embedder, so they're always measured with this
+# one tokenizer. CHUNKER_VERSION covers the algorithm and these settings: bump it
+# when MAX_TOKENS or CHUNK_TOKENIZER changes, so stored chunks get rebuilt.
+CHUNK_TOKENIZER = "BAAI/bge-small-en-v1.5"
 
 
 def _approx_tokens(text: str) -> int:
