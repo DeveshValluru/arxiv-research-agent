@@ -20,7 +20,7 @@ ABBREVIATIONS = (
     "etc.",
 )
 MAX_TOKENS = 350
-CHUNKER_VERSION = 2
+CHUNKER_VERSION = 3
 
 
 def _approx_tokens(text: str) -> int:
@@ -73,6 +73,18 @@ def _pack(
     return chunks
 
 
+def _sentence_units(
+    paragraph: str, max_tokens: int, count_tokens: Callable[[str], int]
+) -> list[str]:
+    units: list[str] = []
+    for sentence in _split_sentences(paragraph):
+        if count_tokens(sentence) <= max_tokens:
+            units.append(sentence)
+        else:
+            units.extend(sentence.split())
+    return units
+
+
 def _chunk_texts(
     text: str,
     max_tokens: int,
@@ -87,7 +99,7 @@ def _chunk_texts(
         else:
             chunks.extend(_pack(small, max_tokens, "\n\n", count_tokens))
             small = []
-            sentences = _split_sentences(paragraph)
+            sentences = _sentence_units(paragraph, max_tokens, count_tokens)
             chunks.extend(_pack(sentences, max_tokens, " ", count_tokens))
 
     chunks.extend(_pack(small, max_tokens, "\n\n", count_tokens))

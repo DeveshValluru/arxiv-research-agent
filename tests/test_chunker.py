@@ -128,6 +128,16 @@ def test_chunk_texts_never_loses_words_and_respects_limit():
     assert all(_approx_tokens(chunk) <= 20 for chunk in chunks)
 
 
+def test_chunk_texts_splits_a_giant_sentence_by_words():
+    giant = " ".join(f"word{n}" for n in range(100))
+
+    chunks = _chunk_texts(giant, max_tokens=20)
+
+    assert len(chunks) > 1
+    assert all(_approx_tokens(chunk) <= 20 for chunk in chunks)
+    assert " ".join(chunks).split() == giant.split()
+
+
 CHUNKS = chunk_paper(PAPER, "2499.00001", 1)
 
 
