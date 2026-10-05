@@ -1,6 +1,5 @@
 from sentence_transformers import SentenceTransformer
 
-
 model = SentenceTransformer("BAAI/bge-small-en-v1.5")
 
 sentences = [
@@ -17,7 +16,6 @@ print("shape:", vectors.shape)
 
 similarity = vectors @ vectors.T
 
-for i,sentence in enumerate(sentences):
+for i, sentence in enumerate(sentences):
     scores = " ".join(f"{similarity[i][j]:.2f}" for j in range(len(sentences)))
     print(scores, "|", sentence[:55])
-

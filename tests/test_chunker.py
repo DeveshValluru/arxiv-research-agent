@@ -89,6 +89,17 @@ def test_pack_never_loses_or_duplicates_text():
     assert " ".join(chunks) == " ".join(units)
 
 
+def test_pack_uses_the_given_token_counter():
+    def count_words(text: str) -> int:
+        return len(text.split())
+
+    chunks = _pack(
+        ["a b", "c d", "e f"], max_tokens=4, separator=" ", count_tokens=count_words
+    )
+
+    assert chunks == ["a b c d", "e f"]
+
+
 def test_chunk_texts_packs_small_paragraphs_together():
     assert _chunk_texts("aaaa\n\nbbbb\n\ncccc", max_tokens=10) == [
         "aaaa\n\nbbbb\n\ncccc"
