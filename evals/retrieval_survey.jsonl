@@ -1,0 +1,15 @@
+{"query": "How can a judge turn the probability of answering yes into a score between zero and one?", "evidence": ["normalizes the output logits"], "type": "paraphrase"}
+{"query": "Why might researchers avoid commercial API models as evaluators and train their own instead?", "evidence": ["privacy leakage"], "type": "paraphrase"}
+{"query": "Which base model does PandaLM fine-tune as its evaluator?", "evidence": ["fine-tunes LLaMA-7B"], "type": "exact_term"}
+{"query": "What is the difference between judging two responses side by side and giving each a yes/no verdict?", "evidence": ["This evaluation is a relative evaluation"], "type": "paraphrase"}
+{"query": "How does G-Eval structure the outputs of its evaluations?", "evidence": ["form-filling paradigm"], "type": "exact_term"}
+{"query": "When training a model specifically to evaluate, which step matters most?", "evidence": ["collection and construction of training data"], "type": "paraphrase"}
+{"query": "How do evaluation pipelines make an LLM judge's scores less random?", "evidence": ["averaging multiple scores of the same sample"], "type": "paraphrase"}
+{"query": "What does the percentage agreement metric measure?", "evidence": ["proportion of samples on which LLM and human annotators agree"], "type": "exact_term"}
+{"query": "Are LLM judges unfair toward particular genders or communities?", "evidence": ["bias against certain demographic groups"], "type": "paraphrase"}
+{"query": "Can an attacker manipulate an LLM evaluator into giving higher marks with crafted text?", "evidence": ["inserting phrases that artificially enhance scores"], "type": "paraphrase"}
+{"query": "Which finance tasks are LLMs already showing promise on?", "evidence": ["forecasting, anomaly detection, and personalized text generation"], "type": "paraphrase"}
+{"query": "Why is extra care needed when LLM judges are used for legal decisions?", "evidence": ["heightened concerns regarding potential biases"], "type": "paraphrase"}
+{"query": "Why are today's vision-language models still unreliable as judges of image-plus-text content?", "evidence": ["current multimodal LLMs like GPT-4 Vision still struggle"], "type": "paraphrase"}
+{"query": "What is the idea behind World Model-as-a-Judge?", "evidence": ["simulate the consequences of that solution"], "type": "exact_term"}
+{"query": "Which benchmark for evaluating LLM judges has around thirty thousand pairwise annotations?", "evidence": ["| 30k | Pairwise |"], "type": "paraphrase"}
