@@ -1,0 +1,24 @@
+# Local Postgres with pgvector: the chunk index (vectors + full-text search).
+#   start:  docker compose up -d
+#   stop:   docker compose down        (data survives in the pgdata volume)
+#   wipe:   docker compose down -v     (deletes the index; re-run the ingest script)
+services:
+  db:
+    image: pgvector/pgvector:0.8.7-pg17
+    environment:
+      POSTGRES_USER: arxiv
+      POSTGRES_DB: arxiv
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arxiv -d arxiv"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:
