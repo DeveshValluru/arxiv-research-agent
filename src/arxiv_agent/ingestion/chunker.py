@@ -1,5 +1,6 @@
 import math
 import re
+from collections.abc import Callable
 
 from arxiv_agent.ingestion.models import Chunk, ParsedPaper, Section
 
@@ -19,7 +20,7 @@ ABBREVIATIONS = (
     "etc.",
 )
 MAX_TOKENS = 350
-CHUNKER_VERSION = 1
+CHUNKER_VERSION = 3
 
 
 def _approx_tokens(text: str) -> int:
@@ -48,14 +49,19 @@ def _split_sentences(text: str) -> list[str]:
     return sentences
 
 
-def _pack(units: list[str], max_tokens: int, separator: str) -> list[str]:
+def _pack(
+    units: list[str],
+    max_tokens: int,
+    separator: str,
+    count_tokens: Callable[[str], int] = _approx_tokens,
+) -> list[str]:
     chunks: list[str] = []
     current: list[str] = []
 
     for unit in units:
         candidate = separator.join(current + [unit])
 
-        if current and _approx_tokens(candidate) > max_tokens:
+        if current and count_tokens(candidate) > max_tokens:
             chunks.append(separator.join(current))
             current = [unit]
 
@@ -67,19 +73,36 @@ def _pack(units: list[str], max_tokens: int, separator: str) -> list[str]:
     return chunks
 
 
-def _chunk_texts(text: str, max_tokens: int) -> list[str]:
+def _sentence_units(
+    paragraph: str, max_tokens: int, count_tokens: Callable[[str], int]
+) -> list[str]:
+    units: list[str] = []
+    for sentence in _split_sentences(paragraph):
+        if count_tokens(sentence) <= max_tokens:
+            units.append(sentence)
+        else:
+            units.extend(sentence.split())
+    return units
+
+
+def _chunk_texts(
+    text: str,
+    max_tokens: int,
+    count_tokens: Callable[[str], int] = _approx_tokens,
+) -> list[str]:
     chunks: list[str] = []
     small: list[str] = []
 
     for paragraph in text.split("\n\n"):
-        if _approx_tokens(paragraph) <= max_tokens:
+        if count_tokens(paragraph) <= max_tokens:
             small.append(paragraph)
         else:
-            chunks.extend(_pack(small, max_tokens, "\n\n"))
+            chunks.extend(_pack(small, max_tokens, "\n\n", count_tokens))
             small = []
-            chunks.extend(_pack(_split_sentences(paragraph), max_tokens, " "))
+            sentences = _sentence_units(paragraph, max_tokens, count_tokens)
+            chunks.extend(_pack(sentences, max_tokens, " ", count_tokens))
 
-    chunks.extend(_pack(small, max_tokens, "\n\n"))
+    chunks.extend(_pack(small, max_tokens, "\n\n", count_tokens))
     return chunks
 
 
@@ -92,11 +115,12 @@ def chunk_paper(
     arxiv_id: str,
     version: int,
     max_tokens: int = MAX_TOKENS,
+    count_tokens: Callable[[str], int] = _approx_tokens,
 ) -> list[Chunk]:
     pieces: list[tuple[str, list[str], str, str]] = []
 
     if paper.abstract:
-        for text in _chunk_texts(paper.abstract, max_tokens):
+        for text in _chunk_texts(paper.abstract, max_tokens, count_tokens):
             pieces.append(
                 (
                     "abstract",
@@ -110,7 +134,7 @@ def chunk_paper(
         if not section.text:
             continue
 
-        for text in _chunk_texts(section.text, max_tokens):
+        for text in _chunk_texts(section.text, max_tokens, count_tokens):
             pieces.append(("text", path, text, _with_header(paper.title, path, text)))
 
     for table in paper.tables:
@@ -132,7 +156,7 @@ def chunk_paper(
             section_path=path,
             text=text,
             embed_text=embed_text,
-            token_count=_approx_tokens(embed_text),
+            token_count=count_tokens(embed_text),
             chunker_version=CHUNKER_VERSION,
         )
         for index, (kind, path, text, embed_text) in enumerate(pieces)
