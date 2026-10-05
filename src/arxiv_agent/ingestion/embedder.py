@@ -1,7 +1,20 @@
+from collections.abc import Callable
+
 import numpy as np
 from sentence_transformers import SentenceTransformer
+from transformers import AutoTokenizer
 
 BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+DEFAULT_MODEL_ID = "BAAI/bge-small-en-v1.5"
+
+
+def load_token_counter(model_id: str) -> Callable[[str], int]:
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+
+    def count_tokens(text: str) -> int:
+        return len(tokenizer(text, verbose=False)["input_ids"])
+
+    return count_tokens
 
 
 class Embedder:
