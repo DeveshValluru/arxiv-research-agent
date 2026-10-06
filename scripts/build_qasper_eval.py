@@ -159,6 +159,7 @@ def main() -> None:
     OUTPUT.write_text(
         "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in items),
         encoding="utf-8",
+        newline = "\n"
     )
     answerable = [i for i in items if i["type"] == "answerable"]
     matched = sum(i["evidence_matched"] for i in answerable)
