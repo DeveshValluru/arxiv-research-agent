@@ -1,3 +1,8 @@
+import re
+
+SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+WORD = re.compile(r"[a-z0-9]+")
+MIN_EVIDENCE_WORDS = 8
 QUOTE_FIXES = {"‘": "'", "’": "'", "“": '"', "”": '"'}
 
 
@@ -30,3 +35,20 @@ def recall_at_k(ranks: list[int | None], k: int) -> float:
 
 def mean_reciprocal_rank(ranks: list[int | None]) -> float:
     return sum(1 / rank if rank else 0.0 for rank in ranks) / len(ranks)
+
+
+def _words(text: str) -> str:
+    return " ".join(WORD.findall(text.lower()))
+
+
+def match_evidence(chunk_texts: list[str], paragraphs: list[str]) -> set[int]:
+    chunks = [f" {_words(text)} " for text in chunk_texts]
+
+    sentences = [
+        f" {words} "
+        for paragraph in paragraphs
+        for sentence in SENTENCE_END.split(paragraph)
+        if len((words := _words(sentence)).split()) >= MIN_EVIDENCE_WORDS
+    ]
+
+    return {i for i, chunk in enumerate(chunks) if any(s in chunk for s in sentences)}
