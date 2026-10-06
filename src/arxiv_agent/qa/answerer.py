@@ -1,6 +1,11 @@
+import random
 import time
+from collections.abc import Callable
 
+import httpx
 from huggingface_hub import InferenceClient
+from huggingface_hub.errors import InferenceTimeoutError
+from langfuse import Langfuse, get_client, propagate_attributes
 from pydantic import BaseModel, ConfigDict
 
 from arxiv_agent.ingestion.embedder import Embedder, HostedEmbedder
@@ -18,6 +23,15 @@ SYSTEM_PROMPT = f"""You answer questions about one research paper using ONLY the
 4. If the sources answer only part of the question, answer that part and say which part the paper doesn't cover.
 5. Be concise: at most 5 sentences.
 /no_think"""
+
+RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+ATTEMPTS_PER_PROVIDER = 2
+BACKOFF_SECONDS = 2.0
+NO_TRACE_ID = "0" * 32  # what a disabled Langfuse client reports
+
+
+class LLMUnavailableError(Exception):
+    pass
 
 
 class Source(BaseModel):
@@ -39,7 +53,8 @@ class QAResult(BaseModel):
     answer: CheckedAnswer
     sources: list[Source]
     model: str
-    provider: str
+    provider: str  # the provider that actually answered, after any failover
+    llm_attempts: int
     finish_reason: str
     prompt_tokens: int
     completion_tokens: int
@@ -49,6 +64,7 @@ class QAResult(BaseModel):
     prompt_version: int
     embedder: str
     chunker_version: int
+    trace_id: str | None
 
 
 def format_sources(hits: list[SearchHit]) -> str:
@@ -72,60 +88,89 @@ def build_messages(question: str, hits: list[SearchHit]) -> list[dict]:
     ]
 
 
+def _is_transient(exc: Exception) -> bool:
+    # Worth retrying: network trouble, timeouts, rate limits, overloaded or broken
+    # servers. Not worth it: our own mistakes (a bad request, a wrong model name).
+    if isinstance(exc, (httpx.TransportError, InferenceTimeoutError)):
+        return True
+    response = getattr(exc, "response", None)
+    return getattr(response, "status_code", None) in RETRYABLE_STATUSES
+
+
 class Answerer:
+    # Tracing lives here, in the library, so every caller (ask.py, the eval, the
+    # API) gets the same trace. Callers only decide whether and where to send it.
     def __init__(
         self,
         store: ChunkStore,
         embedder: Embedder | HostedEmbedder,
         model: str,
-        provider: str,
+        providers: list[str],
         k: int = 5,
         max_tokens: int = 500,
-        client: InferenceClient | None = None,
+        clients: dict[str, InferenceClient] | None = None,
+        langfuse: Langfuse | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        if not providers:
+            raise ValueError("need at least one provider")
         self._store = store
         self._embedder = embedder
         self._model = model
-        self._provider = provider
+        self._providers = providers
         self._k = k
         self._max_tokens = max_tokens
-        self._client = client or InferenceClient(provider=provider)
+        self._clients = clients or {p: InferenceClient(provider=p) for p in providers}
+        self._langfuse = langfuse or get_client()
+        self._sleep = sleep
 
     def ask(self, question: str, arxiv_id: str, version: int) -> QAResult:
-        start = time.perf_counter()
-        hits = self._store.vector_search(
-            self._embedder.model_id,
-            self._embedder.embed_query(question),
-            k=self._k,
-            papers=[(arxiv_id, version)],
-        )
-        retrieval_ms = 1000 * (time.perf_counter() - start)
-        if not hits:
-            raise LookupError(
-                f"{arxiv_id}v{version} has no indexed chunks for "
-                f"{self._embedder.model_id}; ingest it first"
+        paper = f"{arxiv_id}v{version}"
+        with (
+            self._langfuse.start_as_current_observation(
+                as_type="chain",
+                name="ask",
+                input={"question": question, "paper": paper},
+            ) as root,
+            propagate_attributes(
+                trace_name="ask",
+                tags=[paper, self._model],
+                metadata={
+                    "prompt_version": str(PROMPT_VERSION),
+                    "embedder": self._embedder.model_id,
+                },
+            ),
+        ):
+            hits, retrieval_ms = self._retrieve(question, arxiv_id, version)
+            response, provider, attempts, generation_ms = self._generate(
+                build_messages(question, hits)
             )
 
-        start = time.perf_counter()
-        response = self._client.chat_completion(
-            build_messages(question, hits),
-            model=self._model,
-            max_tokens=self._max_tokens,
-        )
-        generation_ms = 1000 * (time.perf_counter() - start)
+            choice = response.choices[0]
+            answer = check_answer(choice.message.content or "", n_sources=len(hits))
+            if choice.finish_reason == "length":
+                answer = answer.model_copy(
+                    update={
+                        "status": "invalid",
+                        "problems": [
+                            *answer.problems,
+                            "finish_reason was 'length': the answer was cut off",
+                        ],
+                    }
+                )
 
-        choice = response.choices[0]
-        answer = check_answer(choice.message.content or "", n_sources=len(hits))
-        if choice.finish_reason == "length":
-            answer = answer.model_copy(
-                update={
-                    "status": "invalid",
-                    "problems": [
-                        *answer.problems,
-                        "finish_reason was 'length': the answer was cut off",
-                    ],
-                }
+            # Invalid answers become warnings, so they stand out in the trace list.
+            root.update(
+                output=answer.text,
+                level="WARNING" if answer.status == "invalid" else None,
+                status_message="; ".join(answer.problems) or None,
+                metadata={
+                    "status": answer.status,
+                    "provider": provider,
+                    "chunker_version": hits[0].chunk.chunker_version,
+                },
             )
+            trace_id = root.trace_id
 
         return QAResult(
             question=question,
@@ -143,7 +188,8 @@ class Answerer:
                 for i, hit in enumerate(hits, start=1)
             ],
             model=self._model,
-            provider=self._provider,
+            provider=provider,
+            llm_attempts=attempts,
             finish_reason=choice.finish_reason,
             prompt_tokens=response.usage.prompt_tokens,
             completion_tokens=response.usage.completion_tokens,
@@ -153,4 +199,89 @@ class Answerer:
             prompt_version=PROMPT_VERSION,
             embedder=self._embedder.model_id,
             chunker_version=hits[0].chunk.chunker_version,
+            trace_id=None if trace_id == NO_TRACE_ID else trace_id,
+        )
+
+    def _retrieve(
+        self, question: str, arxiv_id: str, version: int
+    ) -> tuple[list[SearchHit], float]:
+        with self._langfuse.start_as_current_observation(
+            as_type="retriever",
+            name="retrieve",
+            input={"question": question, "k": self._k},
+            metadata={"embedder": self._embedder.model_id},
+        ) as span:
+            start = time.perf_counter()
+            hits = self._store.vector_search(
+                self._embedder.model_id,
+                self._embedder.embed_query(question),
+                k=self._k,
+                papers=[(arxiv_id, version)],
+            )
+            retrieval_ms = 1000 * (time.perf_counter() - start)
+            if not hits:
+                raise LookupError(
+                    f"{arxiv_id}v{version} has no indexed chunks for "
+                    f"{self._embedder.model_id}; ingest it first"
+                )
+            span.update(
+                output=[
+                    {
+                        "label": f"S{i}",
+                        "chunk_id": hit.chunk.chunk_id,
+                        "score": round(hit.score, 4),
+                        "section": " > ".join(hit.chunk.section_path),
+                    }
+                    for i, hit in enumerate(hits, start=1)
+                ]
+            )
+        return hits, retrieval_ms
+
+    def _generate(self, messages: list[dict]) -> tuple[object, str, int, float]:
+        # Retry transient failures with exponential backoff and jitter, then fail
+        # over to the next provider serving the same model. Each attempt is its
+        # own generation in the trace, so failovers are visible, not mysterious.
+        start = time.perf_counter()
+        attempts = 0
+        failures: list[str] = []
+        for provider in self._providers:
+            for attempt in range(1, ATTEMPTS_PER_PROVIDER + 1):
+                attempts += 1
+                with self._langfuse.start_as_current_observation(
+                    as_type="generation",
+                    name="llm",
+                    model=self._model,
+                    input=messages,
+                    model_parameters={"max_tokens": self._max_tokens},
+                    metadata={"provider": provider, "attempt": attempts},
+                ) as generation:
+                    try:
+                        response = self._clients[provider].chat_completion(
+                            messages, model=self._model, max_tokens=self._max_tokens
+                        )
+                    except Exception as exc:
+                        if not _is_transient(exc):
+                            raise
+                        generation.update(
+                            level="ERROR", status_message=f"{provider}: {exc}"[:500]
+                        )
+                        failures.append(f"{provider}: {type(exc).__name__}")
+                    else:
+                        cost = getattr(response.usage, "estimated_cost", None)
+                        generation.update(
+                            output=response.choices[0].message.content,
+                            usage_details={
+                                "input": response.usage.prompt_tokens,
+                                "output": response.usage.completion_tokens,
+                            },
+                            cost_details={"total": cost} if cost is not None else None,
+                        )
+                        elapsed_ms = 1000 * (time.perf_counter() - start)
+                        return response, provider, attempts, elapsed_ms
+                if attempt < ATTEMPTS_PER_PROVIDER:
+                    backoff = BACKOFF_SECONDS * 2 ** (attempt - 1)
+                    self._sleep(backoff + random.uniform(0, 1))
+
+        raise LLMUnavailableError(
+            f"{self._model}: every provider failed ({'; '.join(failures)})"
         )

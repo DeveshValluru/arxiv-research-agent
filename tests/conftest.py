@@ -8,6 +8,11 @@ from psycopg.rows import dict_row
 
 from arxiv_agent.storage.chunk_store import ChunkStore
 
+# Tests must never send traces to the real Langfuse project, even when run with
+# --env-file .env (which holds the real keys). The tracing code still runs; the
+# client just doesn't export anything.
+os.environ["LANGFUSE_TRACING_ENABLED"] = "false"
+
 
 @pytest.fixture
 def store():
