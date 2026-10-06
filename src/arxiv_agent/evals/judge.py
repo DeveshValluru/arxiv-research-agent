@@ -1,13 +1,18 @@
 import re
+import time
+from collections.abc import Callable
 from typing import Literal
 
 from huggingface_hub import InferenceClient
 from langfuse import Langfuse, get_client
 from pydantic import BaseModel, ValidationError
 
+from arxiv_agent.llm import chat_with_failover
+
 # The judge must not share a family with the generator (Qwen): models favour
 # text that sounds like their own (self-enhancement bias).
 JUDGE_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
+JUDGE_PROVIDERS = ["novita", "ovhcloud"]
 JUDGE_PROMPT_VERSION = 1
 SCORES = {"correct": 1.0, "partially_correct": 0.5, "incorrect": 0.0}
 JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
@@ -81,13 +86,18 @@ class Judge:
     def __init__(
         self,
         model: str = JUDGE_MODEL,
-        provider: str = "novita",
-        client: InferenceClient | None = None,
+        providers: list[str] | None = None,
+        clients: dict[str, InferenceClient] | None = None,
         langfuse: Langfuse | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._model = model
-        self._client = client or InferenceClient(provider=provider)
+        self._providers = providers or JUDGE_PROVIDERS
+        self._clients = clients or {
+            provider: InferenceClient(provider=provider) for provider in self._providers
+        }
         self._langfuse = langfuse or get_client()
+        self._sleep = sleep
 
     def grade(
         self,
@@ -97,23 +107,21 @@ class Judge:
         false_premise: bool = False,
     ) -> Verdict:
         messages = build_judge_messages(question, gold_answers, answer, false_premise)
-        with self._langfuse.start_as_current_observation(
-            as_type="generation",
-            name="judge",
-            model=self._model,
-            input=messages,
-            metadata={"judge_prompt_version": JUDGE_PROMPT_VERSION},
-        ) as generation:
-            # temperature 0: the same answer should get the same grade every run
-            response = self._client.chat_completion(
-                messages, model=self._model, max_tokens=300, temperature=0.0
+        try:
+            response, _, _ = chat_with_failover(
+                clients=self._clients,
+                providers=self._providers,
+                model=self._model,
+                messages=messages,
+                langfuse=self._langfuse,
+                name="judge",
+                metadata={"judge_prompt_version": JUDGE_PROMPT_VERSION},
+                sleep=self._sleep,
+                max_tokens=300,
+                temperature=0.0,  # the same answer should get the same grade
             )
-            raw = response.choices[0].message.content or ""
-            generation.update(
-                output=raw,
-                usage_details={
-                    "input": response.usage.prompt_tokens,
-                    "output": response.usage.completion_tokens,
-                },
-            )
-        return parse_verdict(raw)
+        except Exception as exc:
+            # One unreachable judge must not end a 50-question run: the runner
+            # counts it as a judge failure and moves on.
+            raise JudgeError(f"judge call failed: {exc}") from exc
+        return parse_verdict(response.choices[0].message.content or "")

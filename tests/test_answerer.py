@@ -8,11 +8,11 @@ import pytest
 
 from arxiv_agent.ingestion.chunker import CHUNKER_VERSION, chunk_paper
 from arxiv_agent.ingestion.html_parser import parse_arxiv_html
+from arxiv_agent.llm import LLMUnavailableError
 from arxiv_agent.qa.answerer import (
     PROMPT_VERSION,
     SYSTEM_PROMPT,
     Answerer,
-    LLMUnavailableError,
     build_messages,
     format_sources,
 )

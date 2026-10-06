@@ -1,14 +1,12 @@
-import random
 import time
 from collections.abc import Callable
 
-import httpx
 from huggingface_hub import InferenceClient
-from huggingface_hub.errors import InferenceTimeoutError
 from langfuse import Langfuse, get_client, propagate_attributes
 from pydantic import BaseModel, ConfigDict
 
 from arxiv_agent.ingestion.embedder import Embedder, HostedEmbedder
+from arxiv_agent.llm import chat_with_failover
 from arxiv_agent.qa.checker import REFUSAL, CheckedAnswer, check_answer
 from arxiv_agent.storage.chunk_store import ChunkStore, SearchHit
 
@@ -24,14 +22,7 @@ SYSTEM_PROMPT = f"""You answer questions about one research paper using ONLY the
 5. Be concise: at most 5 sentences.
 /no_think"""
 
-RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
-ATTEMPTS_PER_PROVIDER = 2
-BACKOFF_SECONDS = 2.0
 NO_TRACE_ID = "0" * 32  # what a disabled Langfuse client reports
-
-
-class LLMUnavailableError(Exception):
-    pass
 
 
 class Source(BaseModel):
@@ -86,15 +77,6 @@ def build_messages(question: str, hits: list[SearchHit]) -> list[dict]:
             "content": f"Sources:\n\n{format_sources(hits)}\n\nQuestion: {question}",
         },
     ]
-
-
-def _is_transient(exc: Exception) -> bool:
-    # Worth retrying: network trouble, timeouts, rate limits, overloaded or broken
-    # servers. Not worth it: our own mistakes (a bad request, a wrong model name).
-    if isinstance(exc, (httpx.TransportError, InferenceTimeoutError)):
-        return True
-    response = getattr(exc, "response", None)
-    return getattr(response, "status_code", None) in RETRYABLE_STATUSES
 
 
 class Answerer:
@@ -238,50 +220,14 @@ class Answerer:
         return hits, retrieval_ms
 
     def _generate(self, messages: list[dict]) -> tuple[object, str, int, float]:
-        # Retry transient failures with exponential backoff and jitter, then fail
-        # over to the next provider serving the same model. Each attempt is its
-        # own generation in the trace, so failovers are visible, not mysterious.
         start = time.perf_counter()
-        attempts = 0
-        failures: list[str] = []
-        for provider in self._providers:
-            for attempt in range(1, ATTEMPTS_PER_PROVIDER + 1):
-                attempts += 1
-                with self._langfuse.start_as_current_observation(
-                    as_type="generation",
-                    name="llm",
-                    model=self._model,
-                    input=messages,
-                    model_parameters={"max_tokens": self._max_tokens},
-                    metadata={"provider": provider, "attempt": attempts},
-                ) as generation:
-                    try:
-                        response = self._clients[provider].chat_completion(
-                            messages, model=self._model, max_tokens=self._max_tokens
-                        )
-                    except Exception as exc:
-                        if not _is_transient(exc):
-                            raise
-                        generation.update(
-                            level="ERROR", status_message=f"{provider}: {exc}"[:500]
-                        )
-                        failures.append(f"{provider}: {type(exc).__name__}")
-                    else:
-                        cost = getattr(response.usage, "estimated_cost", None)
-                        generation.update(
-                            output=response.choices[0].message.content,
-                            usage_details={
-                                "input": response.usage.prompt_tokens,
-                                "output": response.usage.completion_tokens,
-                            },
-                            cost_details={"total": cost} if cost is not None else None,
-                        )
-                        elapsed_ms = 1000 * (time.perf_counter() - start)
-                        return response, provider, attempts, elapsed_ms
-                if attempt < ATTEMPTS_PER_PROVIDER:
-                    backoff = BACKOFF_SECONDS * 2 ** (attempt - 1)
-                    self._sleep(backoff + random.uniform(0, 1))
-
-        raise LLMUnavailableError(
-            f"{self._model}: every provider failed ({'; '.join(failures)})"
+        response, provider, attempts = chat_with_failover(
+            clients=self._clients,
+            providers=self._providers,
+            model=self._model,
+            messages=messages,
+            langfuse=self._langfuse,
+            sleep=self._sleep,
+            max_tokens=self._max_tokens,
         )
+        return response, provider, attempts, 1000 * (time.perf_counter() - start)

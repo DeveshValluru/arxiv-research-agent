@@ -15,15 +15,24 @@ from arxiv_agent.evals.judge import (
 GOOD_JSON = '{"reasoning": "Names the same model.", "verdict": "correct"}'
 
 
+class FakeHTTPError(Exception):
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"HTTP {status_code}")
+        self.response = SimpleNamespace(status_code=status_code)
+
+
 class FakeClient:
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: str = GOOD_JSON, error: Exception | None = None):
         self.content = content
+        self.error = error
         self.calls: list[dict] = []
 
     def chat_completion(self, messages, model=None, max_tokens=None, temperature=None):
         self.calls.append(
             {"messages": messages, "model": model, "temperature": temperature}
         )
+        if self.error:
+            raise self.error
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=self.content))],
             usage=SimpleNamespace(prompt_tokens=200, completion_tokens=30),
@@ -67,10 +76,19 @@ def test_missing_json_is_rejected():
         parse_verdict("The answer is correct.")
 
 
-def test_grade_calls_the_judge_model_deterministically():
-    client = FakeClient(GOOD_JSON)
+def make_judge(*clients: FakeClient, sleeps: list | None = None) -> Judge:
+    providers = [f"fake-{letter}" for letter in "ab"[: len(clients)]]
+    return Judge(
+        providers=providers,
+        clients=dict(zip(providers, clients)),
+        sleep=(sleeps if sleeps is not None else []).append,
+    )
 
-    verdict = Judge(client=client).grade("Which model?", ["LLaMA-7B."], "LLaMA-7B")
+
+def test_grade_calls_the_judge_model_deterministically():
+    client = FakeClient()
+
+    verdict = make_judge(client).grade("Which model?", ["LLaMA-7B."], "LLaMA-7B")
 
     assert verdict.verdict == "correct"
     assert client.calls[0]["model"] == JUDGE_MODEL
@@ -78,3 +96,19 @@ def test_grade_calls_the_judge_model_deterministically():
     assert client.calls[0]["messages"] == build_judge_messages(
         "Which model?", ["LLaMA-7B."], "LLaMA-7B"
     )
+
+
+def test_busy_judge_provider_fails_over_to_the_next():
+    busy, backup = FakeClient(error=FakeHTTPError(429)), FakeClient()
+
+    verdict = make_judge(busy, backup).grade("Which model?", ["LLaMA-7B."], "LLaMA-7B")
+
+    assert verdict.verdict == "correct"
+    assert (len(busy.calls), len(backup.calls)) == (2, 1)
+
+
+def test_unreachable_judge_becomes_a_judge_error():
+    judge = make_judge(FakeClient(error=FakeHTTPError(503)))
+
+    with pytest.raises(JudgeError, match="judge call failed"):
+        judge.grade("Which model?", ["LLaMA-7B."], "LLaMA-7B")
