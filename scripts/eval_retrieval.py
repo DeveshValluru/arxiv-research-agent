@@ -10,6 +10,7 @@ left out (and counted).
 """
 
 import argparse
+import functools
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -22,8 +23,10 @@ from arxiv_agent.evals.retrieval import (
 )
 from arxiv_agent.evals.runner import EvalItem, load_items
 from arxiv_agent.ingestion.embedder import BGE_QUERY_PREFIX, DEFAULT_MODEL_ID, Embedder
+from arxiv_agent.ingestion.models import Chunk
 from arxiv_agent.retrieval.bm25 import BM25Index
 from arxiv_agent.retrieval.fusion import reciprocal_rank_fusion
+from arxiv_agent.retrieval.reranker import Reranker
 from arxiv_agent.storage.chunk_store import ChunkStore
 
 EVAL_SETS = [Path("evals/qa_qasper.jsonl"), Path("evals/qa_survey.jsonl")]
@@ -62,7 +65,25 @@ def make_searches(store: ChunkStore, embedder: Embedder) -> dict[str, Search]:
         fused = reciprocal_rank_fusion([dense(question, paper), bm25(question, paper)])
         return [chunk_id for chunk_id, _ in fused[:DEPTH]]
 
-    return {"dense": dense, "keyword": keyword, "bm25": bm25, "hybrid": hybrid}
+    chunk_maps: dict[tuple[str, int], dict[str, Chunk]] = {}
+
+    @functools.cache
+    def reranker() -> Reranker:
+        return Reranker()  # loaded on first use, so other methods don't pay for it
+
+    def rerank(question: str, paper: tuple[str, int]) -> list[str]:
+        if paper not in chunk_maps:
+            chunk_maps[paper] = {c.chunk_id: c for c in store.get_chunks(*paper)}
+        candidates = [chunk_maps[paper][cid] for cid in hybrid(question, paper)]
+        return [chunk.chunk_id for chunk, _ in reranker().rerank(question, candidates)]
+
+    return {
+        "dense": dense,
+        "keyword": keyword,
+        "bm25": bm25,
+        "hybrid": hybrid,
+        "rerank": rerank,
+    }
 
 
 def source_recall(
