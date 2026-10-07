@@ -15,12 +15,13 @@ The routing functions only read state and the clock; they never call a model.
 import time
 from collections.abc import Callable
 
-from langfuse import Langfuse, get_client
+from langfuse import Langfuse, get_client, propagate_attributes
 from langgraph.graph import END, START, StateGraph
 
 from arxiv_agent.llm import Usage
 from arxiv_agent.review.citations import finalize
 from arxiv_agent.review.critic import Critic
+from arxiv_agent.review.events import step_summary
 from arxiv_agent.review.nodes import ReviewNodes
 from arxiv_agent.review.reader import Reader
 from arxiv_agent.review.state import Budget, ReviewState
@@ -114,21 +115,42 @@ def build_review_graph(
     return graph.compile()
 
 
+EventHandler = Callable[[str, dict], None]
+
+
 async def run_review(
     question: str,
     graph,
     budget: Budget | None = None,
+    on_event: EventHandler | None = None,
+    session_id: str | None = None,
     langfuse: Langfuse | None = None,
 ) -> tuple[ReviewState, str | None]:
     # One trace per review: every node, LLM call and tool call nests under it.
+    # session_id groups a job's traces (5.3: before and after a pause).
+    # on_event(kind, data) hears "step" after each node and "progress" from
+    # inside long nodes; the graph streams them as it runs.
     langfuse = langfuse or get_client()
-    with langfuse.start_as_current_observation(
-        as_type="agent", name="literature-review", input={"question": question}
-    ) as root:
-        state = await graph.ainvoke(
+    on_event = on_event or (lambda kind, data: None)
+    with (
+        langfuse.start_as_current_observation(
+            as_type="agent", name="literature-review", input={"question": question}
+        ) as root,
+        propagate_attributes(trace_name="literature-review", session_id=session_id),
+    ):
+        state: ReviewState = {}
+        async for mode, chunk in graph.astream(
             {"question": question, "budget": budget or Budget()},
             config={"recursion_limit": RECURSION_LIMIT},
-        )
+            stream_mode=["updates", "custom", "values"],
+        ):
+            if mode == "values":
+                state = chunk  # the whole state after each step; the last is final
+            elif mode == "updates":
+                for node, update in chunk.items():
+                    on_event("step", step_summary(node, update))
+            else:
+                on_event("progress", chunk)
         critique = state.get("critique")
         root.update(
             output={

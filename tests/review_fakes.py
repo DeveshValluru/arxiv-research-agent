@@ -269,6 +269,7 @@ def run(
     max_revisions: int = 2,
     budget: Budget | None = None,
     clock: Callable[[], float] = time.time,
+    on_event: Callable[[str, dict], None] | None = None,
     **finder_settings,
 ):
     async def go():
@@ -284,6 +285,6 @@ def run(
                 Critic(judge_model or judge(), max_revisions=max_revisions),
                 clock=clock,
             )
-            return await run_review(QUESTION, graph, budget=budget)
+            return await run_review(QUESTION, graph, budget=budget, on_event=on_event)
 
     return asyncio.run(go())

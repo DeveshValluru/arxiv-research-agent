@@ -10,6 +10,7 @@ import time
 from collections.abc import Callable
 
 from langfuse import Langfuse, get_client
+from langgraph.config import get_stream_writer
 
 from arxiv_agent.library import Library, Passage, Source
 from arxiv_agent.llm import ChatModel, LLMOutputError, Usage, parse_json_object
@@ -95,22 +96,32 @@ class Reader:
             # as soon as it's ingested, so the model reads paper 1 while paper 2
             # downloads. Once the budget runs out, the remaining papers are
             # skipped: ingesting is the slow part of a review.
-            jobs: list[tuple[ScreenedPaper, Source, asyncio.Task | None]] = []
-            for paper in papers:
+            progress = get_stream_writer()  # "reading 3/8" for whoever watches
+            pending: list[tuple[ScreenedPaper, Source, asyncio.Task | None]] = []
+            for done, paper in enumerate(papers, start=1):
                 elapsed = self._clock() - state["started_at"]
+                task = None
                 if state["budget"].problem(state["spent"], elapsed):
-                    jobs.append((paper, "skipped", None))
-                    continue
-                source, passages = await self._prepare(state["question"], paper)
-                task = asyncio.create_task(
-                    self._extract(state["question"], paper, passages)
+                    source: Source = "skipped"
+                else:
+                    source, passages = await self._prepare(state["question"], paper)
+                    task = asyncio.create_task(
+                        self._extract(state["question"], paper, passages)
+                    )
+                pending.append((paper, source, task))
+                progress(
+                    {
+                        "done": done,
+                        "total": len(papers),
+                        "paper": paper.arxiv_id,
+                        "source": source,
+                    }
                 )
-                jobs.append((paper, source, task))
-            await asyncio.gather(*(task for _, _, task in jobs if task))
+            await asyncio.gather(*(task for _, _, task in pending if task))
 
             claims: list[Claim] = []
             reports, spent = [], Usage()
-            for paper, source, task in jobs:
+            for paper, source, task in pending:
                 found, rejected, usage = task.result() if task else ([], [], Usage())
                 spent += usage
                 for claim in found:
