@@ -15,6 +15,7 @@ from langfuse import get_client
 
 from arxiv_agent.ingestion.embedder import BGE_QUERY_PREFIX, DEFAULT_MODEL_ID, Embedder
 from arxiv_agent.qa.answerer import Answerer
+from arxiv_agent.retrieval.retriever import build_retriever
 from arxiv_agent.storage.chunk_store import ChunkStore
 
 VERSIONED_ID = re.compile(r"^(?P<id>.+)v(?P<version>\d+)$")
@@ -31,6 +32,9 @@ def main() -> None:
         help="comma-separated, tried in order when one is busy or down",
     )
     parser.add_argument("-k", type=int, default=5, help="sources sent to the model")
+    parser.add_argument(
+        "--retriever", choices=["dense", "hybrid", "rerank"], default="rerank"
+    )
     parser.add_argument("--json", action="store_true", help="print the full record")
     args = parser.parse_args()
 
@@ -44,9 +48,9 @@ def main() -> None:
     langfuse = get_client()
 
     store = ChunkStore.connect(os.environ["DATABASE_URL"])
+    embedder = Embedder(DEFAULT_MODEL_ID, query_prefix=BGE_QUERY_PREFIX)
     answerer = Answerer(
-        store,
-        Embedder(DEFAULT_MODEL_ID, query_prefix=BGE_QUERY_PREFIX),
+        build_retriever(args.retriever, store, embedder),
         model=args.model,
         providers=args.providers.split(","),
         k=args.k,

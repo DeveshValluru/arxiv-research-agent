@@ -10,7 +10,6 @@ left out (and counted).
 """
 
 import argparse
-import functools
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -23,10 +22,8 @@ from arxiv_agent.evals.retrieval import (
 )
 from arxiv_agent.evals.runner import EvalItem, load_items
 from arxiv_agent.ingestion.embedder import BGE_QUERY_PREFIX, DEFAULT_MODEL_ID, Embedder
-from arxiv_agent.ingestion.models import Chunk
 from arxiv_agent.retrieval.bm25 import BM25Index
-from arxiv_agent.retrieval.fusion import reciprocal_rank_fusion
-from arxiv_agent.retrieval.reranker import Reranker
+from arxiv_agent.retrieval.retriever import Retriever, RetrieverKind, build_retriever
 from arxiv_agent.storage.chunk_store import ChunkStore
 
 EVAL_SETS = [Path("evals/qa_qasper.jsonl"), Path("evals/qa_survey.jsonl")]
@@ -38,11 +35,19 @@ Search = Callable[[str, tuple[str, int]], list[str]]
 
 
 def make_searches(store: ChunkStore, embedder: Embedder) -> dict[str, Search]:
-    def dense(question: str, paper: tuple[str, int]) -> list[str]:
-        hits = store.vector_search(
-            DEFAULT_MODEL_ID, embedder.embed_query(question), k=DEPTH, papers=[paper]
-        )
-        return [hit.chunk.chunk_id for hit in hits]
+    # dense, hybrid and rerank are the library retrievers the Answerer uses, so
+    # this script measures exactly what ships. keyword and bm25 stay here as
+    # single-method baselines.
+    retrievers: dict[str, Retriever] = {}
+
+    def library(kind: RetrieverKind) -> Search:
+        def search(question: str, paper: tuple[str, int]) -> list[str]:
+            if kind not in retrievers:  # built on first use (rerank loads a model)
+                retrievers[kind] = build_retriever(kind, store, embedder)
+            hits = retrievers[kind].retrieve(question, paper, DEPTH)
+            return [hit.chunk.chunk_id for hit in hits]
+
+        return search
 
     def keyword(question: str, paper: tuple[str, int]) -> list[str]:
         hits = store.keyword_search(question, k=DEPTH, papers=[paper])
@@ -61,28 +66,12 @@ def make_searches(store: ChunkStore, embedder: Embedder) -> dict[str, Search]:
         ids, index = bm25_indexes[paper]
         return [ids[i] for i, _ in index.top(question, DEPTH)]
 
-    def hybrid(question: str, paper: tuple[str, int]) -> list[str]:
-        fused = reciprocal_rank_fusion([dense(question, paper), bm25(question, paper)])
-        return [chunk_id for chunk_id, _ in fused[:DEPTH]]
-
-    chunk_maps: dict[tuple[str, int], dict[str, Chunk]] = {}
-
-    @functools.cache
-    def reranker() -> Reranker:
-        return Reranker()  # loaded on first use, so other methods don't pay for it
-
-    def rerank(question: str, paper: tuple[str, int]) -> list[str]:
-        if paper not in chunk_maps:
-            chunk_maps[paper] = {c.chunk_id: c for c in store.get_chunks(*paper)}
-        candidates = [chunk_maps[paper][cid] for cid in hybrid(question, paper)]
-        return [chunk.chunk_id for chunk, _ in reranker().rerank(question, candidates)]
-
     return {
-        "dense": dense,
+        "dense": library("dense"),
         "keyword": keyword,
         "bm25": bm25,
-        "hybrid": hybrid,
-        "rerank": rerank,
+        "hybrid": library("hybrid"),
+        "rerank": library("rerank"),
     }
 
 
