@@ -5,10 +5,10 @@ from huggingface_hub import InferenceClient
 from langfuse import Langfuse, get_client, propagate_attributes
 from pydantic import BaseModel, ConfigDict
 
-from arxiv_agent.ingestion.embedder import Embedder, HostedEmbedder
 from arxiv_agent.llm import chat_with_failover
 from arxiv_agent.qa.checker import REFUSAL, CheckedAnswer, check_answer
-from arxiv_agent.storage.chunk_store import ChunkStore, SearchHit
+from arxiv_agent.retrieval.retriever import Retriever
+from arxiv_agent.storage.chunk_store import SearchHit
 
 # Bump PROMPT_VERSION whenever SYSTEM_PROMPT or the message layout changes, so
 # eval scores can say which prompt produced them.
@@ -53,7 +53,7 @@ class QAResult(BaseModel):
     retrieval_ms: float
     generation_ms: float
     prompt_version: int
-    embedder: str
+    retriever: str  # e.g. "hybrid(BAAI/bge-small-en-v1.5+bm25)+rerank(...)"
     chunker_version: int
     trace_id: str | None
 
@@ -84,8 +84,7 @@ class Answerer:
     # API) gets the same trace. Callers only decide whether and where to send it.
     def __init__(
         self,
-        store: ChunkStore,
-        embedder: Embedder | HostedEmbedder,
+        retriever: Retriever,
         model: str,
         providers: list[str],
         k: int = 5,
@@ -96,8 +95,7 @@ class Answerer:
     ) -> None:
         if not providers:
             raise ValueError("need at least one provider")
-        self._store = store
-        self._embedder = embedder
+        self._retriever = retriever
         self._model = model
         self._providers = providers
         self._k = k
@@ -119,7 +117,7 @@ class Answerer:
                 tags=[paper, self._model],
                 metadata={
                     "prompt_version": str(PROMPT_VERSION),
-                    "embedder": self._embedder.model_id,
+                    "retriever": self._retriever.name,
                 },
             ),
         ):
@@ -179,7 +177,7 @@ class Answerer:
             retrieval_ms=retrieval_ms,
             generation_ms=generation_ms,
             prompt_version=PROMPT_VERSION,
-            embedder=self._embedder.model_id,
+            retriever=self._retriever.name,
             chunker_version=hits[0].chunk.chunker_version,
             trace_id=None if trace_id == NO_TRACE_ID else trace_id,
         )
@@ -191,20 +189,15 @@ class Answerer:
             as_type="retriever",
             name="retrieve",
             input={"question": question, "k": self._k},
-            metadata={"embedder": self._embedder.model_id},
+            metadata={"retriever": self._retriever.name},
         ) as span:
             start = time.perf_counter()
-            hits = self._store.vector_search(
-                self._embedder.model_id,
-                self._embedder.embed_query(question),
-                k=self._k,
-                papers=[(arxiv_id, version)],
-            )
+            hits = self._retriever.retrieve(question, (arxiv_id, version), self._k)
             retrieval_ms = 1000 * (time.perf_counter() - start)
             if not hits:
                 raise LookupError(
                     f"{arxiv_id}v{version} has no indexed chunks for "
-                    f"{self._embedder.model_id}; ingest it first"
+                    f"{self._retriever.name}; ingest it first"
                 )
             span.update(
                 output=[

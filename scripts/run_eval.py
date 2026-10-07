@@ -27,6 +27,7 @@ from arxiv_agent.ingestion.chunker import CHUNKER_VERSION
 from arxiv_agent.ingestion.embedder import BGE_QUERY_PREFIX, DEFAULT_MODEL_ID, Embedder
 from arxiv_agent.llm import LLMUnavailableError
 from arxiv_agent.qa.answerer import PROMPT_VERSION, Answerer
+from arxiv_agent.retrieval.retriever import build_retriever
 from arxiv_agent.storage.chunk_store import ChunkStore
 
 EVAL_SETS = [Path("evals/qa_qasper.jsonl"), Path("evals/qa_survey.jsonl")]
@@ -147,6 +148,9 @@ def main() -> None:
     parser.add_argument("--model", default="Qwen/Qwen3-32B")
     parser.add_argument("--providers", default="deepinfra,nscale")
     parser.add_argument("-k", type=int, default=5, help="sources sent to the model")
+    parser.add_argument(
+        "--retriever", choices=["dense", "hybrid", "rerank"], default="rerank"
+    )
     parser.add_argument("--limit", type=int, help="only the first N questions")
     parser.add_argument("--out", type=Path, default=RUNS_DIR)
     args = parser.parse_args()
@@ -154,13 +158,15 @@ def main() -> None:
     os.environ.setdefault("LANGFUSE_TRACING_ENVIRONMENT", "eval")
     langfuse = get_client()
     started_at = datetime.now(UTC)
-    run_id = f"{started_at:%Y%m%d-%H%M%S}-{args.model.split('/')[-1].lower()}"
+    model_name = args.model.split("/")[-1].lower()
+    run_id = f"{started_at:%Y%m%d-%H%M%S}-{model_name}-{args.retriever}"
 
     items = load_items(args.sets)[: args.limit]
     store = ChunkStore.connect(os.environ["DATABASE_URL"])
+    embedder = Embedder(DEFAULT_MODEL_ID, query_prefix=BGE_QUERY_PREFIX)
+    retriever = build_retriever(args.retriever, store, embedder)
     answerer = Answerer(
-        store,
-        Embedder(DEFAULT_MODEL_ID, query_prefix=BGE_QUERY_PREFIX),
+        retriever,
         model=args.model,
         providers=args.providers.split(","),
         k=args.k,
@@ -211,10 +217,11 @@ def main() -> None:
         "k": args.k,
         "prompt_version": PROMPT_VERSION,
         "embedder": DEFAULT_MODEL_ID,
+        "retriever": retriever.name,
         "chunker_version": CHUNKER_VERSION,
         "judge_model": JUDGE_MODEL,
         "judge_prompt_version": JUDGE_PROMPT_VERSION,
-        "eval_sets": {str(path): content_hash(path) for path in args.sets},
+        "eval_sets": {path.as_posix(): content_hash(path) for path in args.sets},
     }
     run_dir = args.out / run_id
     run_dir.mkdir(parents=True, exist_ok=True)

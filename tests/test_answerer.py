@@ -3,7 +3,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
-import numpy as np
 import pytest
 
 from arxiv_agent.ingestion.chunker import CHUNKER_VERSION, chunk_paper
@@ -29,21 +28,16 @@ HITS = [SearchHit(chunk=CHUNKS[4], score=0.8), SearchHit(chunk=CHUNKS[3], score=
 GOOD = "Swapping the order reduces the bias [S1]."
 
 
-class FakeStore:
+class FakeRetriever:
+    name = "test/fake-retriever"
+
     def __init__(self, hits: list[SearchHit]) -> None:
         self.hits = hits
-        self.searches: list[dict] = []
+        self.calls: list[tuple] = []
 
-    def vector_search(self, model_id, query_vector, k=10, papers=None):
-        self.searches.append({"model_id": model_id, "k": k, "papers": papers})
+    def retrieve(self, question, paper, k):
+        self.calls.append((question, paper, k))
         return self.hits
-
-
-class FakeEmbedder:
-    model_id = "test/fake-embedder"
-
-    def embed_query(self, query: str) -> np.ndarray:
-        return np.zeros(3, dtype=np.float32)
 
 
 class FakeHTTPError(Exception):
@@ -105,8 +99,7 @@ class FakeLangfuse:
 def make_answerer(*llms: FakeLLM, hits=HITS, langfuse=None, sleeps=None):
     providers = [f"fake-{letter}" for letter in "abc"[: len(llms)]]
     return Answerer(
-        FakeStore(hits),
-        FakeEmbedder(),
+        FakeRetriever(hits),
         model="test/fake-llm",
         providers=providers,
         clients=dict(zip(providers, llms)),
@@ -154,7 +147,7 @@ def test_ask_returns_the_full_record():
     assert result.cost_usd == pytest.approx(0.0001)
     assert result.finish_reason == "stop"
     assert result.prompt_version == PROMPT_VERSION
-    assert result.embedder == "test/fake-embedder"
+    assert result.retriever == "test/fake-retriever"
     assert result.chunker_version == CHUNKER_VERSION
     assert result.trace_id == "abc123"
     assert result.retrieval_ms >= 0 and result.generation_ms >= 0
@@ -166,9 +159,7 @@ def test_ask_retrieves_k_chunks_from_this_paper_only():
 
     answerer.ask("Why swap?", "2499.00001", 1)
 
-    assert answerer._store.searches == [
-        {"model_id": "test/fake-embedder", "k": 5, "papers": [("2499.00001", 1)]}
-    ]
+    assert answerer._retriever.calls == [("Why swap?", ("2499.00001", 1), 5)]
     assert llm.calls[0]["model"] == "test/fake-llm"
     assert llm.calls[0]["messages"] == build_messages("Why swap?", HITS)
 
@@ -278,8 +269,7 @@ def test_tests_never_send_traces():
     # conftest.py turns tracing off, so the real client runs but sends nothing.
     assert os.environ["LANGFUSE_TRACING_ENABLED"] == "false"
     answerer = Answerer(
-        FakeStore(HITS),
-        FakeEmbedder(),
+        FakeRetriever(HITS),
         model="test/fake-llm",
         providers=["fake-a"],
         clients={"fake-a": FakeLLM(GOOD)},

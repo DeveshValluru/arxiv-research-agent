@@ -85,7 +85,7 @@ def make_result(text: str, status: str, source_index: int = 4) -> QAResult:
         retrieval_ms=40.0,
         generation_ms=1000.0,
         prompt_version=1,
-        embedder="test/fake-embedder",
+        retriever="test/fake-retriever",
         chunker_version=3,
         trace_id="abc123",
     )
