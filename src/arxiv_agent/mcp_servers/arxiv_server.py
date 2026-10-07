@@ -9,6 +9,7 @@ and retries (arXiv allows one request at a time).
 
 import logging
 import re
+from datetime import date
 from pathlib import Path
 from typing import Annotated
 
@@ -48,7 +49,9 @@ def _phrase(text: str) -> str | None:
     return " ".join(words)
 
 
-def build_search_query(query: str, category: str | None = None) -> str:
+def build_search_query(
+    query: str, category: str | None = None, published_before: date | None = None
+) -> str:
     # The model writes plain words; code writes arXiv's syntax, so the query is
     # always well-formed and the model can't inject operators. Measured on the
     # live API: one stopword ("the") turned a 90-result query into 9 irrelevant
@@ -73,6 +76,10 @@ def build_search_query(query: str, category: str | None = None) -> str:
                 f"got {category!r}"
             )
         parts.append(f"cat:{category}")
+    if published_before is not None:
+        # First submitted before that day: arXiv wants both ends of the range,
+        # and its collection starts in 1991.
+        parts.append(f"submittedDate:[199101010000 TO {published_before:%Y%m%d}0000]")
     return " AND ".join(dict.fromkeys(parts))
 
 
@@ -170,6 +177,15 @@ def create_server(
             Field(description="Optional arXiv category, e.g. 'cs.CL' or 'stat.ML'."),
         ] = None,
         max_results: Annotated[int, Field(ge=1, le=MAX_RESULTS)] = 5,
+        published_before: Annotated[
+            date | None,
+            Field(
+                description=(
+                    "Optional: only papers first submitted before this date "
+                    "(YYYY-MM-DD)."
+                )
+            ),
+        ] = None,
     ) -> SearchResult:
         """Search arXiv by keywords; returns matching papers, most relevant first.
 
@@ -178,7 +194,7 @@ def create_server(
         up papers whose ids you already know, use get_metadata instead.
         """
         try:
-            arxiv_query = build_search_query(query, category)
+            arxiv_query = build_search_query(query, category, published_before)
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
         try:

@@ -28,15 +28,17 @@ from arxiv_agent.tools.toolbox import McpToolbox
 QUESTION = "How biased are LLM judges?"
 
 
-def paper(arxiv_id: str, title: str) -> PaperSummary:
+def paper(
+    arxiv_id: str, title: str, published: datetime = datetime(2024, 5, 1, tzinfo=UTC)
+) -> PaperSummary:
     return PaperSummary(
         arxiv_id=arxiv_id,
         version=1,
         title=title,
         authors=["Ada Lovelace", "Alan Turing", "Grace Hopper"],
         abstract=f"An abstract about {title.lower()}.",
-        published=datetime(2024, 5, 1, tzinfo=UTC),
-        updated=datetime(2024, 5, 1, tzinfo=UTC),
+        published=published,
+        updated=published,
         primary_category="cs.CL",
         categories=["cs.CL"],
     )
@@ -47,7 +49,9 @@ SWAP = paper("2305.17926", "Large Language Models are not Fair Evaluators")
 AGREEMENT = paper("2306.05685", "Judging LLM-as-a-Judge with MT-Bench")
 PREJUDICE = paper("2410.02736", "Justice or Prejudice? Biases in LLM-as-a-Judge")
 JUDGELM = paper("2310.17631", "JudgeLM: Fine-tuned Judges")
-FOLLOWUP = paper("2601.00001", "A Follow-up on Judge Bias")
+FOLLOWUP = paper(
+    "2601.00001", "A Follow-up on Judge Bias", datetime(2026, 1, 5, tzinfo=UTC)
+)
 PAPERS = {
     p.arxiv_id: p for p in (POSITION, SWAP, AGREEMENT, PREJUDICE, JUDGELM, FOLLOWUP)
 }

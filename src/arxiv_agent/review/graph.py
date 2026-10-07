@@ -156,8 +156,10 @@ async def run_review(
     thread_id: str,
     budget: Budget | None = None,
     pause_for_review: bool = False,
+    published_before: str | None = None,
     decision: dict | None = None,
     on_event: EventHandler | None = None,
+    session_id: str | None = None,
     langfuse: Langfuse | None = None,
 ) -> ReviewRun:
     # Starts a review, or carries on with one under the same thread_id:
@@ -165,7 +167,8 @@ async def run_review(
     # - stopped mid-way (its worker died): continue from the last checkpoint;
     # - otherwise: start from the question.
     # One trace per run; the thread id is also the Langfuse session, so a
-    # review's runs (before and after a pause) are grouped.
+    # review's runs (before and after a pause) are grouped. An eval passes its
+    # run id as session_id instead, to group all of its reviews.
     # on_event(kind, data) hears "step" after each node and "progress" from
     # inside long nodes; the graph streams them as it runs.
     langfuse = langfuse or get_client()
@@ -190,11 +193,15 @@ async def run_review(
             "budget": budget or Budget(),
             "pause_for_review": pause_for_review,
         }
+        if published_before:
+            graph_input["published_before"] = published_before
     with (
         langfuse.start_as_current_observation(
             as_type="agent", name="literature-review", input={"question": question}
         ) as root,
-        propagate_attributes(trace_name="literature-review", session_id=thread_id),
+        propagate_attributes(
+            trace_name="literature-review", session_id=session_id or thread_id
+        ),
     ):
         state: ReviewState = {}
         async for mode, chunk in graph.astream(

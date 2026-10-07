@@ -208,6 +208,9 @@ class ReviewState(TypedDict, total=False):
     spent: Annotated[Usage, operator.add]
     stopped: str  # why the review stopped early, if the budget ran out
     pause_for_review: bool  # deep mode: wait for a person after screening
+    # YYYY-MM-DD: only papers first submitted before this date are found, as if
+    # the review ran then (the survey eval uses it to compare fairly)
+    published_before: str
     review_requested_at: float  # when the wait began
     paused_seconds: float  # total time spent waiting, left out of the time budget
     sub_queries: list[str]

@@ -93,10 +93,12 @@ class ReviewNodes:
             name="searcher",
             input={"sub_queries": state["sub_queries"]},
         ) as span:
+            arguments = {"max_results": self._results_per_query}
+            if state.get("published_before"):  # a review "as of" a past date
+                arguments["published_before"] = state["published_before"]
             for query in state["sub_queries"]:
                 result = await self._toolbox.call(
-                    "search_papers",
-                    {"query": query, "max_results": self._results_per_query},
+                    "search_papers", {"query": query, **arguments}
                 )
                 if not result.ok:  # one failed query shouldn't sink the review
                     continue
@@ -238,7 +240,15 @@ class ReviewNodes:
                     links.setdefault(bare, []).append(link)
             # Stable sort: ties keep the order they were found in.
             ranked = sorted(links, key=lambda i: -len(links[i]))
-            new = await self._lookup(ranked[: self._snowball_limit], links)
+            # With a date cutoff some links are too new (papers citing a seed
+            # often are): look up more, keep the best that pass.
+            cutoff = state.get("published_before")
+            looked_up = ranked[: MAX_LOOKUP if cutoff else self._snowball_limit]
+            new = [
+                c
+                for c in await self._lookup(looked_up, links)
+                if not cutoff or c.published < cutoff
+            ][: self._snowball_limit]
             span.update(
                 output={
                     "linked": len(links),
