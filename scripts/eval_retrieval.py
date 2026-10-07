@@ -23,6 +23,7 @@ from arxiv_agent.evals.retrieval import (
 from arxiv_agent.evals.runner import EvalItem, load_items
 from arxiv_agent.ingestion.embedder import BGE_QUERY_PREFIX, DEFAULT_MODEL_ID, Embedder
 from arxiv_agent.retrieval.bm25 import BM25Index
+from arxiv_agent.retrieval.fusion import reciprocal_rank_fusion
 from arxiv_agent.storage.chunk_store import ChunkStore
 
 EVAL_SETS = [Path("evals/qa_qasper.jsonl"), Path("evals/qa_survey.jsonl")]
@@ -57,7 +58,11 @@ def make_searches(store: ChunkStore, embedder: Embedder) -> dict[str, Search]:
         ids, index = bm25_indexes[paper]
         return [ids[i] for i, _ in index.top(question, DEPTH)]
 
-    return {"dense": dense, "keyword": keyword, "bm25": bm25}
+    def hybrid(question: str, paper: tuple[str, int]) -> list[str]:
+        fused = reciprocal_rank_fusion([dense(question, paper), bm25(question, paper)])
+        return [chunk_id for chunk_id, _ in fused[:DEPTH]]
+
+    return {"dense": dense, "keyword": keyword, "bm25": bm25, "hybrid": hybrid}
 
 
 def source_recall(
