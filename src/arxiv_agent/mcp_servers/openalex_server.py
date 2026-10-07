@@ -28,11 +28,17 @@ MAX_CITATIONS = 25
 NEW_STYLE_ID = re.compile(r"^(\d{4}\.\d{4,5})(?:v\d+)?$")
 
 
+class CitingPaper(Work):
+    # "unknown", not null: OpenAlex lacking an arXiv link doesn't mean the paper
+    # isn't on arXiv, and a null reads as "no" to a model.
+    on_arxiv: Literal["yes", "unknown"]
+
+
 class CitationsResult(BaseModel):
     paper: Work
     total_citations: int
     sort: str
-    citing_papers: list[Work]
+    citing_papers: list[CitingPaper]
 
 
 def _bare_id(arxiv_id: str) -> str:
@@ -95,8 +101,9 @@ def create_server(client: OpenAlexClient | None = None) -> MCPServer:
     ) -> CitationsResult:
         """List papers that cite a given paper, with how often each is cited.
 
-        Citing papers have an arxiv_id when they are on arXiv; journal and
-        conference papers may only have a DOI.
+        on_arxiv is "unknown" when OpenAlex has no arXiv link for a citing paper;
+        published versions often lack the link even when the paper is on arXiv.
+        To check, call search_papers with the paper's title.
         """
         paper = find(arxiv_id)
         try:
@@ -106,7 +113,15 @@ def create_server(client: OpenAlexClient | None = None) -> MCPServer:
         except OpenAlexError as exc:
             raise ToolError(f"OpenAlex couldn't list citations: {exc}") from exc
         return CitationsResult(
-            paper=paper, total_citations=total, sort=sort, citing_papers=citing
+            paper=paper,
+            total_citations=total,
+            sort=sort,
+            citing_papers=[
+                CitingPaper(
+                    **work.model_dump(), on_arxiv="yes" if work.arxiv_id else "unknown"
+                )
+                for work in citing
+            ],
         )
 
     return server

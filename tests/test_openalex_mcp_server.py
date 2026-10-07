@@ -106,6 +106,8 @@ def test_get_citations_looks_up_the_paper_then_its_citations():
     assert data["total_citations"] == 486
     assert data["paper"]["openalex_id"] == "W4380353763"
     assert [w["arxiv_id"] for w in data["citing_papers"]] == ["2309.07430", None]
+    # "unknown", not a bare null: a missing link doesn't mean "not on arXiv"
+    assert [w["on_arxiv"] for w in data["citing_papers"]] == ["yes", "unknown"]
 
 
 def test_unknown_sort_is_rejected_by_the_schema():
