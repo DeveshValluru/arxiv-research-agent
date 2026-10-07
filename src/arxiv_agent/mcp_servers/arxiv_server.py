@@ -9,6 +9,8 @@ and retries (arXiv allows one request at a time).
 
 import logging
 import re
+from datetime import date
+from pathlib import Path
 from typing import Annotated
 
 from mcp.server import MCPServer
@@ -22,6 +24,7 @@ from arxiv_agent.clients.arxiv import (
     ArxivUnavailableError,
     PaperSummary,
 )
+from arxiv_agent.ingestion.html_cache import HTML_CACHE_DIR, load_html
 from arxiv_agent.ingestion.html_parser import parse_arxiv_html
 from arxiv_agent.retrieval.bm25 import STOPWORDS
 
@@ -46,7 +49,9 @@ def _phrase(text: str) -> str | None:
     return " ".join(words)
 
 
-def build_search_query(query: str, category: str | None = None) -> str:
+def build_search_query(
+    query: str, category: str | None = None, published_before: date | None = None
+) -> str:
     # The model writes plain words; code writes arXiv's syntax, so the query is
     # always well-formed and the model can't inject operators. Measured on the
     # live API: one stopword ("the") turned a 90-result query into 9 irrelevant
@@ -71,6 +76,10 @@ def build_search_query(query: str, category: str | None = None) -> str:
                 f"got {category!r}"
             )
         parts.append(f"cat:{category}")
+    if published_before is not None:
+        # First submitted before that day: arXiv wants both ends of the range,
+        # and its collection starts in 1991.
+        parts.append(f"submittedDate:[199101010000 TO {published_before:%Y%m%d}0000]")
     return " AND ".join(dict.fromkeys(parts))
 
 
@@ -135,7 +144,11 @@ def _unavailable() -> ToolError:
     )
 
 
-def create_server(client: ArxivClient | None = None) -> MCPServer:
+def create_server(
+    client: ArxivClient | None = None, html_cache: Path | None = None
+) -> MCPServer:
+    # html_cache: share ingestion's page cache, so a paper whose bibliography
+    # was read here isn't downloaded again when it's ingested.
     arxiv = client or ArxivClient()
     server = MCPServer(
         "arxiv",
@@ -164,6 +177,15 @@ def create_server(client: ArxivClient | None = None) -> MCPServer:
             Field(description="Optional arXiv category, e.g. 'cs.CL' or 'stat.ML'."),
         ] = None,
         max_results: Annotated[int, Field(ge=1, le=MAX_RESULTS)] = 5,
+        published_before: Annotated[
+            date | None,
+            Field(
+                description=(
+                    "Optional: only papers first submitted before this date "
+                    "(YYYY-MM-DD)."
+                )
+            ),
+        ] = None,
     ) -> SearchResult:
         """Search arXiv by keywords; returns matching papers, most relevant first.
 
@@ -172,7 +194,7 @@ def create_server(client: ArxivClient | None = None) -> MCPServer:
         up papers whose ids you already know, use get_metadata instead.
         """
         try:
-            arxiv_query = build_search_query(query, category)
+            arxiv_query = build_search_query(query, category, published_before)
         except ValueError as exc:
             raise ToolError(str(exc)) from exc
         try:
@@ -250,7 +272,10 @@ def create_server(client: ArxivClient | None = None) -> MCPServer:
         bare = VERSION_SUFFIX.sub("", arxiv_id)
         version = int(arxiv_id[len(bare) + 1 :]) if arxiv_id != bare else None
         try:
-            html = arxiv.fetch_html(bare, version)
+            if html_cache is not None and version is not None:
+                html = load_html(arxiv, bare, version, html_cache)
+            else:  # "latest" can't be a cache key
+                html = arxiv.fetch_html(bare, version)
         except ArxivUnavailableError as exc:
             raise _unavailable() from exc
         except ArxivError as exc:
@@ -277,7 +302,7 @@ def create_server(client: ArxivClient | None = None) -> MCPServer:
 
 
 # The server MCP tools look for ("mcp", "server" or "app" at module level).
-server = create_server()
+server = create_server(html_cache=HTML_CACHE_DIR)
 
 if __name__ == "__main__":
     # httpx logs every request at INFO; keep the server's output to warnings.

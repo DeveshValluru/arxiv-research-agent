@@ -11,10 +11,8 @@ summary stamped with every version that can change a score.
 """
 
 import argparse
-import hashlib
 import json
 import os
-import subprocess
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +20,7 @@ from pathlib import Path
 from langfuse import Langfuse, get_client, propagate_attributes
 
 from arxiv_agent.evals.judge import JUDGE_MODEL, JUDGE_PROMPT_VERSION, Judge
+from arxiv_agent.evals.provenance import content_hash, git_version
 from arxiv_agent.evals.runner import ItemScore, load_items, score_item, summarize
 from arxiv_agent.ingestion.chunker import CHUNKER_VERSION
 from arxiv_agent.ingestion.embedder import BGE_QUERY_PREFIX, DEFAULT_MODEL_ID, Embedder
@@ -34,27 +33,6 @@ EVAL_SETS = [Path("evals/qa_qasper.jsonl"), Path("evals/qa_survey.jsonl")]
 RUNS_DIR = Path("data/eval_runs")
 WORST_SHOWN = 8
 ID_WIDTH = 24  # QASPER ids are 47 characters; the start is enough to find one
-
-
-def git_version() -> str:
-    # A score is only reproducible from committed code, so say when it wasn't.
-    sha = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.strip()
-    dirty = subprocess.run(
-        ["git", "status", "--porcelain"], capture_output=True, text=True, check=False
-    ).stdout.strip()
-    return f"{sha or 'unknown'}{'-dirty' if dirty else ''}"
-
-
-def content_hash(path: Path) -> str:
-    # Hash the text with normalized line endings, so the same eval set gets the
-    # same hash on Windows (CRLF) and Linux (LF).
-    text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
 def attach_scores(langfuse: Langfuse, score: ItemScore, run_id: str) -> None:

@@ -70,9 +70,9 @@ class FakeArxiv:
         }
 
 
-def call(arxiv: FakeArxiv, tool: str, arguments: dict):
+def call(arxiv: FakeArxiv, tool: str, arguments: dict, html_cache: Path | None = None):
     async def go():
-        async with Client(create_server(arxiv)) as client:
+        async with Client(create_server(arxiv, html_cache)) as client:
             return await client.call_tool(tool, arguments)
 
     return asyncio.run(go())
@@ -256,6 +256,19 @@ def test_get_references_can_keep_only_arxiv_papers():
     data = result.structured_content
     assert data["total"] == 3  # the whole bibliography is still counted
     assert [ref["arxiv_id"] for ref in data["references"]] == ["2306.05685"]
+
+
+def test_get_references_shares_the_html_cache_for_versioned_ids(tmp_path):
+    arxiv = FakeArxiv(html=FIXTURE_HTML)
+
+    for _ in range(2):
+        result = call(arxiv, "get_references", {"arxiv_id": "2499.00001v3"}, tmp_path)
+        assert result.structured_content["total"] == 3
+    call(arxiv, "get_references", {"arxiv_id": "2499.00001"}, tmp_path)
+
+    # Fetched once for v3, then read from disk; "latest" always goes to arXiv.
+    assert arxiv.fetches == [("2499.00001", 3), ("2499.00001", None)]
+    assert (tmp_path / "2499.00001v3.html").exists()
 
 
 def test_get_references_without_html_points_to_get_metadata():
