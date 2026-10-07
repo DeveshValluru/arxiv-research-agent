@@ -1,6 +1,7 @@
 """The literature-review graph.
 
-    start -> planner -> searcher -> screener -> snowball -> screener -> reader
+    start -> planner -> searcher -> screener -> snowball -> screener
+          -> [deep mode: request_review -> human_review (pause)] -> reader
           -> synthesizer -> critic -> (synthesizer again | finalize)
 
 Loop control, in three layers:
@@ -10,25 +11,33 @@ Loop control, in three layers:
    step. When it's used up, the review stops and keeps what it has.
 3. LangGraph's recursion limit is the backstop if routing ever goes wrong.
 The routing functions only read state and the clock; they never call a model.
+
+With a checkpointer, the state is saved after every step under a thread id
+(a job's id). That's what lets a review pause for a person, and lets a review
+whose worker died continue from its last finished step.
 """
 
 import time
 from collections.abc import Callable
+from typing import NamedTuple
 
 from langfuse import Langfuse, get_client, propagate_attributes
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command
 
 from arxiv_agent.llm import Usage
 from arxiv_agent.review.citations import finalize
 from arxiv_agent.review.critic import Critic
 from arxiv_agent.review.events import step_summary
+from arxiv_agent.review.human import HumanReview
 from arxiv_agent.review.nodes import ReviewNodes
 from arxiv_agent.review.reader import Reader
-from arxiv_agent.review.state import Budget, ReviewState
+from arxiv_agent.review.state import Budget, ReviewDecision, ReviewState, elapsed
 from arxiv_agent.review.writer import Synthesizer
 
-# The longest legitimate path is 15 steps (with 2 rewrites); anything near 50
-# means the routing is looping, and LangGraph raises GraphRecursionError.
+# The longest legitimate path is 17 steps (a pause and 2 rewrites); anything
+# near 50 means the routing is looping, and LangGraph raises GraphRecursionError.
 RECURSION_LIMIT = 50
 
 
@@ -44,8 +53,7 @@ class LoopControl:
         }
 
     def out_of_budget(self, state: ReviewState) -> str | None:
-        elapsed = self._clock() - state["started_at"]
-        return state["budget"].problem(state["spent"], elapsed)
+        return state["budget"].problem(state["spent"], elapsed(state, self._clock()))
 
     def stop(self, state: ReviewState) -> ReviewState:
         # Everything done so far is kept: the paper list, the claims, or a
@@ -57,7 +65,14 @@ class LoopControl:
             return END  # nothing relevant found: nothing to read or write
         if self.out_of_budget(state):
             return "stop"
-        return "reader" if state.get("snowballed") else "snowball"
+        if not state.get("snowballed"):
+            return "snowball"
+        return "request_review" if state.get("pause_for_review") else "reader"
+
+    def after_review(self, state: ReviewState) -> str:
+        if not state["kept"]:
+            return END  # the reviewer removed every paper
+        return "stop" if self.out_of_budget(state) else "reader"
 
     def after_reading(self, state: ReviewState) -> str:
         # The budget first: the Reader may have skipped papers because of it.
@@ -80,7 +95,9 @@ def build_review_graph(
     reader: Reader,
     synthesizer: Synthesizer,
     critic: Critic,
+    human: HumanReview,
     clock: Callable[[], float] = time.time,
+    checkpointer: BaseCheckpointSaver | None = None,
 ):
     control = LoopControl(clock)
     graph = StateGraph(ReviewState)
@@ -89,6 +106,8 @@ def build_review_graph(
     graph.add_node("searcher", finder.search)
     graph.add_node("screener", finder.screen)
     graph.add_node("snowball", finder.snowball)
+    graph.add_node("request_review", human.request)
+    graph.add_node("human_review", human.review)
     graph.add_node("reader", reader.read)
     graph.add_node("synthesizer", synthesizer.write)
     graph.add_node("critic", critic.check)
@@ -100,9 +119,15 @@ def build_review_graph(
     graph.add_edge("planner", "searcher")
     graph.add_edge("searcher", "screener")
     graph.add_conditional_edges(
-        "screener", control.after_screening, ["snowball", "reader", "stop", END]
+        "screener",
+        control.after_screening,
+        ["snowball", "request_review", "reader", "stop", END],
     )
     graph.add_edge("snowball", "screener")
+    graph.add_edge("request_review", "human_review")
+    graph.add_conditional_edges(
+        "human_review", control.after_review, ["reader", "stop", END]
+    )
     graph.add_conditional_edges(
         "reader", control.after_reading, ["synthesizer", "stop", END]
     )
@@ -112,59 +137,98 @@ def build_review_graph(
     )
     graph.add_conditional_edges("stop", control.after_stop, ["finalize", END])
     graph.add_edge("finalize", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 EventHandler = Callable[[str, dict], None]
 
 
+class ReviewRun(NamedTuple):
+    state: ReviewState
+    trace_id: str | None
+    pause: dict | None  # what to show the person, when the review is waiting
+
+
 async def run_review(
     question: str,
     graph,
+    *,
+    thread_id: str,
     budget: Budget | None = None,
+    pause_for_review: bool = False,
+    decision: dict | None = None,
     on_event: EventHandler | None = None,
-    session_id: str | None = None,
     langfuse: Langfuse | None = None,
-) -> tuple[ReviewState, str | None]:
-    # One trace per review: every node, LLM call and tool call nests under it.
-    # session_id groups a job's traces (5.3: before and after a pause).
+) -> ReviewRun:
+    # Starts a review, or carries on with one under the same thread_id:
+    # - waiting for a person and given a decision: resume with it;
+    # - stopped mid-way (its worker died): continue from the last checkpoint;
+    # - otherwise: start from the question.
+    # One trace per run; the thread id is also the Langfuse session, so a
+    # review's runs (before and after a pause) are grouped.
     # on_event(kind, data) hears "step" after each node and "progress" from
     # inside long nodes; the graph streams them as it runs.
     langfuse = langfuse or get_client()
     on_event = on_event or (lambda kind, data: None)
+    config = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": RECURSION_LIMIT,
+    }
+    saved = await graph.aget_state(config) if graph.checkpointer else None
+    if saved and saved.interrupts and decision is not None:
+        # Validated here, so a bad decision fails before anything runs. It also
+        # always has both keys: LangGraph ignores an empty (falsy) resume value
+        # and would just pause again.
+        graph_input = Command(
+            resume=ReviewDecision.model_validate(decision).model_dump()
+        )
+    elif saved and saved.next:
+        graph_input = None  # continue from the last checkpoint
+    else:
+        graph_input = {
+            "question": question,
+            "budget": budget or Budget(),
+            "pause_for_review": pause_for_review,
+        }
     with (
         langfuse.start_as_current_observation(
             as_type="agent", name="literature-review", input={"question": question}
         ) as root,
-        propagate_attributes(trace_name="literature-review", session_id=session_id),
+        propagate_attributes(trace_name="literature-review", session_id=thread_id),
     ):
         state: ReviewState = {}
         async for mode, chunk in graph.astream(
-            {"question": question, "budget": budget or Budget()},
-            config={"recursion_limit": RECURSION_LIMIT},
-            stream_mode=["updates", "custom", "values"],
+            graph_input, config=config, stream_mode=["updates", "custom", "values"]
         ):
             if mode == "values":
                 state = chunk  # the whole state after each step; the last is final
             elif mode == "updates":
                 for node, update in chunk.items():
-                    on_event("step", step_summary(node, update))
+                    if node != "__interrupt__":  # the pause is reported below
+                        on_event("step", step_summary(node, update))
             else:
                 on_event("progress", chunk)
+
+        pause = None
+        if graph.checkpointer:
+            saved = await graph.aget_state(config)
+            pause = saved.interrupts[0].value if saved.interrupts else None
         critique = state.get("critique")
         root.update(
             output={
-                "candidates": len(state["candidates"]),
-                "kept": [paper.arxiv_id for paper in state["kept"]],
+                "paused_for_review": pause is not None,
+                "candidates": len(state.get("candidates", [])),
+                "kept": [paper.arxiv_id for paper in state.get("kept", [])],
+                "edits": len(state.get("edits", [])),
                 "claims": len(state.get("claims", [])),
                 "drafts": state.get("drafts", 0),
                 "verdict": critique.verdict if critique else None,
                 "removed": len(state.get("removed", [])),
                 "stopped": state.get("stopped"),
-                "spent": state["spent"].model_dump(),
+                "spent": state["spent"].model_dump() if "spent" in state else None,
                 "review": state.get("review"),
             },
             level="WARNING" if state.get("removed") or state.get("stopped") else None,
         )
         trace_id = root.trace_id
-    return state, None if trace_id == "0" * 32 else trace_id
+    return ReviewRun(state, None if trace_id == "0" * 32 else trace_id, pause)

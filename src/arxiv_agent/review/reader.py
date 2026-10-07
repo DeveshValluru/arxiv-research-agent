@@ -20,6 +20,7 @@ from arxiv_agent.review.state import (
     ReadReport,
     ReviewState,
     ScreenedPaper,
+    elapsed,
 )
 
 READER_PROMPT = """You extract evidence from one research paper for a literature review.
@@ -99,9 +100,9 @@ class Reader:
             progress = get_stream_writer()  # "reading 3/8" for whoever watches
             pending: list[tuple[ScreenedPaper, Source, asyncio.Task | None]] = []
             for done, paper in enumerate(papers, start=1):
-                elapsed = self._clock() - state["started_at"]
                 task = None
-                if state["budget"].problem(state["spent"], elapsed):
+                now = self._clock()
+                if state["budget"].problem(state["spent"], elapsed(state, now)):
                     source: Source = "skipped"
                 else:
                     source, passages = await self._prepare(state["question"], paper)

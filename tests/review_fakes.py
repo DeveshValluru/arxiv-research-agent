@@ -15,8 +15,10 @@ from arxiv_agent.library import Passage
 from arxiv_agent.llm import Completion, Usage
 from arxiv_agent.mcp_servers.arxiv_server import create_server as arxiv_server
 from arxiv_agent.mcp_servers.openalex_server import create_server as openalex_server
+from arxiv_agent.review.checkpoints import memory_checkpointer
 from arxiv_agent.review.critic import Critic
-from arxiv_agent.review.graph import build_review_graph, run_review
+from arxiv_agent.review.graph import ReviewRun, build_review_graph, run_review
+from arxiv_agent.review.human import HumanReview
 from arxiv_agent.review.nodes import ReviewNodes
 from arxiv_agent.review.reader import Reader
 from arxiv_agent.review.state import Budget
@@ -260,6 +262,55 @@ def judge(reply: Reply = strict_judge) -> FakeChat:
     return FakeChat({"critic-llm": reply})
 
 
+class Harness:
+    # A review graph wired to fakes. Every run() opens fresh MCP connections and
+    # builds a fresh graph, like a new process would, but they all share one
+    # checkpointer: so a test can pause, "restart", and resume the same review.
+    def __init__(
+        self,
+        writer: FakeChat,
+        judge_model: FakeChat | None = None,
+        arxiv: FakeArxiv | None = None,
+        openalex: FakeOpenAlex | None = None,
+        library: FakeLibrary | None = None,
+        max_revisions: int = 2,
+        clock: Callable[[], float] = time.time,
+        checkpointer=None,
+        **finder_settings,
+    ) -> None:
+        self.writer = writer
+        self.judge = judge_model or judge()
+        self.arxiv = arxiv or FakeArxiv()
+        self.openalex = openalex or FakeOpenAlex()
+        self.library = library or FakeLibrary()
+        self.max_revisions = max_revisions
+        self.clock = clock
+        self.checkpointer = checkpointer or memory_checkpointer()
+        self.finder_settings = finder_settings
+
+    def run(self, thread_id: str = "review-1", **review_settings) -> ReviewRun:
+        async def go():
+            servers = {
+                "arxiv": arxiv_server(self.arxiv),
+                "openalex": openalex_server(self.openalex),
+            }
+            async with McpToolbox(servers) as toolbox:
+                graph = build_review_graph(
+                    ReviewNodes(self.writer, toolbox, **self.finder_settings),
+                    Reader(self.writer, self.library, clock=self.clock),
+                    Synthesizer(self.writer),
+                    Critic(self.judge, max_revisions=self.max_revisions),
+                    HumanReview(toolbox, clock=self.clock),
+                    clock=self.clock,
+                    checkpointer=self.checkpointer,
+                )
+                return await run_review(
+                    QUESTION, graph, thread_id=thread_id, **review_settings
+                )
+
+        return asyncio.run(go())
+
+
 def run(
     writer: FakeChat,
     judge_model: FakeChat | None = None,
@@ -272,19 +323,16 @@ def run(
     on_event: Callable[[str, dict], None] | None = None,
     **finder_settings,
 ):
-    async def go():
-        servers = {
-            "arxiv": arxiv_server(arxiv or FakeArxiv()),
-            "openalex": openalex_server(openalex or FakeOpenAlex()),
-        }
-        async with McpToolbox(servers) as toolbox:
-            graph = build_review_graph(
-                ReviewNodes(writer, toolbox, **finder_settings),
-                Reader(writer, library or FakeLibrary(), clock=clock),
-                Synthesizer(writer),
-                Critic(judge_model or judge(), max_revisions=max_revisions),
-                clock=clock,
-            )
-            return await run_review(QUESTION, graph, budget=budget, on_event=on_event)
-
-    return asyncio.run(go())
+    # One review start to finish (no pause): returns (state, trace_id).
+    harness = Harness(
+        writer,
+        judge_model,
+        arxiv,
+        openalex,
+        library,
+        max_revisions,
+        clock,
+        **finder_settings,
+    )
+    review = harness.run(budget=budget, on_event=on_event)
+    return review.state, review.trace_id

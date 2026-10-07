@@ -21,7 +21,7 @@ class Candidate(BaseModel):
     authors: list[str]
     published: str
     abstract: str
-    via: Literal["search", "snowball"]
+    via: Literal["search", "snowball", "reviewer"]
     # The sub-queries that returned it, or for snowballed papers the kept
     # papers it's linked to ("cited by 2406.07791", "cites 2406.07791").
     found_by: list[str]
@@ -63,7 +63,7 @@ class ScreenedPaper(BaseModel):
     title: str
     authors: list[str]
     published: str
-    via: Literal["search", "snowball"]
+    via: Literal["search", "snowball", "reviewer"]
     found_by: list[str]
     score: int
     reason: str
@@ -168,6 +168,35 @@ class Budget(BaseModel):
         return None
 
 
+class ReviewDecision(BaseModel):
+    # What the person sends back at the pause: arXiv ids to take out of the
+    # kept list, and ids to put in (any arXiv paper, found by search or not).
+    model_config = ConfigDict(extra="forbid")
+
+    remove: list[str] = []
+    add: list[str] = []
+
+
+class Edit(BaseModel):
+    # One change the reviewer made, and what it says about the pipeline. These
+    # are labels for the eval set:
+    #   removed                          -> the Screener kept a paper it shouldn't have
+    #   added, found but dropped earlier -> the Screener dropped one it should have kept
+    #   added, never found               -> search and snowballing missed it
+    model_config = ConfigDict(extra="forbid")
+
+    arxiv_id: str
+    action: Literal["removed", "added"]
+    label: Literal["screener_false_positive", "screener_false_negative", "search_miss"]
+    title: str
+    screener_score: int | None  # None when search never found the paper
+
+
+def elapsed(state: "ReviewState", now: float) -> float:
+    # Running time only: time spent waiting for a person doesn't count.
+    return now - state["started_at"] - state.get("paused_seconds", 0.0)
+
+
 class ReviewState(TypedDict, total=False):
     # Typed fields, not a shared message list: each node reads only what it
     # needs, so a paper the Screener drops can never reach a later prompt.
@@ -178,12 +207,17 @@ class ReviewState(TypedDict, total=False):
     # sums them, so even parallel calls inside a node are all counted.
     spent: Annotated[Usage, operator.add]
     stopped: str  # why the review stopped early, if the budget ran out
+    pause_for_review: bool  # deep mode: wait for a person after screening
+    review_requested_at: float  # when the wait began
+    paused_seconds: float  # total time spent waiting, left out of the time budget
     sub_queries: list[str]
     criteria: list[str]
     candidates: list[Candidate]
     kept: list[ScreenedPaper]
     dropped: list[ScreenedPaper]
     snowballed: bool
+    edits: list[Edit]  # what the reviewer changed at the pause
+    ignored_edits: list[str]  # edits that couldn't be applied, and why
     claims: list[Claim]
     read: list[ReadReport]
     draft: str

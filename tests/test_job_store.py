@@ -102,3 +102,112 @@ def test_only_one_connection_can_hold_the_worker_lock(connect):
     assert not second.try_lock_worker(key)
     first.close()  # the worker dies: Postgres releases its lock
     assert second.try_lock_worker(key)
+
+
+# --- the pause for review --------------------------------------------------------
+
+REQUEST = {"question": "q", "kept": [{"arxiv_id": "2406.07791"}], "dropped": []}
+
+
+def paused_job(jobs) -> str:
+    job_id = jobs.submit("q", BUDGET, pause_for_review=True)
+    jobs.claim_next()
+    jobs.pause(job_id, REQUEST)
+    return job_id
+
+
+def test_a_paused_job_waits_with_its_request(jobs):
+    job_id = paused_job(jobs)
+
+    job = jobs.get(job_id)
+    assert (job.status, job.pause_for_review) == ("awaiting_review", True)
+    assert job.paused_at is not None
+    assert jobs.review_request(job_id) == REQUEST
+    assert jobs.claim_next() is None  # nothing to do until someone decides
+
+
+def test_a_decision_queues_the_job_again_as_a_new_run(jobs):
+    job_id = paused_job(jobs)
+
+    assert jobs.decide(job_id, {"remove": ["2406.07791"], "add": []})
+
+    resumed = jobs.claim_next()
+    assert resumed.decision == {"remove": ["2406.07791"], "add": []}
+    assert resumed.attempts == 1  # a new run, not a second try
+    assert jobs.events_after(job_id)[-1].data == {
+        "status": "running",
+        "attempt": 1,
+        "after": "your review",
+    }
+
+
+def test_only_a_waiting_job_takes_a_decision(jobs):
+    job_id = jobs.submit("q", BUDGET)
+    assert not jobs.decide(job_id, {"remove": [], "add": []})
+    assert jobs.get(job_id).status == "queued"
+
+
+def test_a_pause_nobody_answers_expires(jobs):
+    stale, fresh = paused_job(jobs), paused_job(jobs)
+    jobs._conn.execute(
+        "UPDATE review_jobs SET paused_at = now() - interval '25 hours' "
+        "WHERE job_id = %s",
+        (stale,),
+    )
+
+    assert jobs.expire_reviews(max_hours=24) == [stale]
+    assert jobs.get(stale).status == "expired"
+    assert jobs.get(fresh).status == "awaiting_review"
+
+
+def test_a_failed_job_can_be_retried(jobs):
+    job_id = jobs.submit("q", BUDGET)
+    jobs.claim_next()
+    jobs.fail(job_id, "LLMUnavailableError: every provider failed")
+
+    assert jobs.retry(job_id)
+    job = jobs.get(job_id)
+    assert (job.status, job.attempts, job.error) == ("queued", 0, None)
+    assert not jobs.retry(job_id)  # only failed jobs
+
+
+def test_labels_are_saved_once_per_paper(jobs):
+    job_id = jobs.submit("How biased are LLM judges?", BUDGET)
+    edit = {
+        "arxiv_id": "2305.17926",
+        "action": "removed",
+        "label": "screener_false_positive",
+        "title": "Large Language Models are not Fair Evaluators",
+        "screener_score": 7,
+    }
+
+    jobs.save_labels(job_id, "How biased are LLM judges?", [edit])
+    jobs.save_labels(job_id, "How biased are LLM judges?", [edit])  # a retried run
+
+    [label] = jobs.labels()
+    assert (label["arxiv_id"], label["label"], label["screener_score"]) == (
+        "2305.17926",
+        "screener_false_positive",
+        7,
+    )
+
+
+def test_a_database_from_before_the_pause_is_upgraded(connect):
+    conn = connect()
+    conn.execute(  # the review_jobs table as 5.2b created it
+        """
+        CREATE TABLE review_jobs (
+            job_id uuid PRIMARY KEY, question text NOT NULL, budget jsonb NOT NULL,
+            status text NOT NULL
+                CHECK (status IN ('queued', 'running', 'done', 'failed')),
+            attempts integer NOT NULL DEFAULT 0,
+            created_at timestamptz NOT NULL DEFAULT now(), started_at timestamptz,
+            heartbeat_at timestamptz, finished_at timestamptz, trace_id text,
+            error text, result jsonb
+        )
+        """
+    )
+    jobs = JobStore(conn)
+    jobs.init_schema()
+
+    assert jobs.get(paused_job(jobs)).status == "awaiting_review"

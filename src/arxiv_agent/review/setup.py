@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from langfuse import Langfuse
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import BaseModel, ConfigDict
 
 from arxiv_agent.clients.arxiv import ArxivClient
@@ -26,6 +27,7 @@ from arxiv_agent.llm import ChatModel
 from arxiv_agent.retrieval.retriever import build_retriever
 from arxiv_agent.review.critic import Critic
 from arxiv_agent.review.graph import build_review_graph
+from arxiv_agent.review.human import HumanReview
 from arxiv_agent.review.nodes import ReviewNodes
 from arxiv_agent.review.reader import Reader
 from arxiv_agent.review.writer import Synthesizer
@@ -49,8 +51,10 @@ class ReviewSettings(BaseModel):
 
 @asynccontextmanager
 async def open_review_graph(
-    settings: ReviewSettings, langfuse: Langfuse
+    settings: ReviewSettings, langfuse: Langfuse, checkpointer: BaseCheckpointSaver
 ) -> AsyncIterator[object]:
+    # checkpointer: Postgres for the worker (jobs survive restarts and pauses),
+    # memory for a foreground review.
     store = ChunkStore.connect(os.environ["DATABASE_URL"])
     try:
         embedder = Embedder(DEFAULT_MODEL_ID, query_prefix=BGE_QUERY_PREFIX)
@@ -74,6 +78,8 @@ async def open_review_graph(
                 Reader(writer, library, langfuse=langfuse),
                 Synthesizer(writer, langfuse=langfuse),
                 Critic(judge, max_revisions=settings.max_revisions, langfuse=langfuse),
+                HumanReview(toolbox, langfuse=langfuse),
+                checkpointer=checkpointer,
             )
     finally:
         store.close()

@@ -3,6 +3,7 @@ import json
 from arxiv_agent.review.events import (
     describe_event,
     format_report,
+    format_review_request,
     result_of,
     step_summary,
 )
@@ -100,3 +101,31 @@ def test_describe_event():
         )
         == "reading 3/8: 2406.07791 (full_text)"
     )
+
+
+def test_describe_event_shows_the_reviewers_edits():
+    edit = {
+        "action": "removed",
+        "arxiv_id": "2305.17926",
+        "label": "screener_false_positive",
+    }
+    data = {"step": "human_review", "kept": 2, "dropped": 1, "edits": [edit]}
+    assert describe_event("step", data) == (
+        "human_review: kept 2, dropped 1, edits removed 2305.17926"
+    )
+
+
+def test_the_review_request_shows_what_will_and_wont_be_read():
+    card = {
+        "arxiv_id": "2406.07791",
+        "title": "Judging the Judges",
+        "score": 9,
+        "reason": "Measures position bias.",
+        "via": "search",
+    }
+    text = format_review_request(
+        {"question": "q?", "kept": [card], "dropped": [card] * 20}, dropped_shown=2
+    )
+    assert "Kept, will be read (1):" in text
+    assert "Dropped (top 2 of 20):" in text
+    assert text.count("Measures position bias.") == 3

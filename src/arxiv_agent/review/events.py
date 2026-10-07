@@ -20,6 +20,8 @@ RESULT_FIELDS = (
     "criteria",
     "kept",
     "dropped",
+    "edits",
+    "ignored_edits",
     "read",
     "claims",
     "drafts",
@@ -45,6 +47,11 @@ def step_summary(node: str, update: dict | None) -> dict:
     if "kept" in update:
         summary["kept"] = len(update["kept"])
         summary["dropped"] = len(update["dropped"])
+    if "edits" in update:
+        # The full edits (a few small records): they are the eval labels.
+        summary["edits"] = [edit.model_dump() for edit in update["edits"]]
+    if update.get("ignored_edits"):
+        summary["ignored"] = update["ignored_edits"]
     if "claims" in update:
         summary["claims"] = len(update["claims"])
     if "drafts" in update:
@@ -74,6 +81,12 @@ def result_of(state: ReviewState) -> dict:
     return result
 
 
+def _short(item: object) -> str:
+    if isinstance(item, dict) and "action" in item:  # an edit
+        return f"{item['action']} {item['arxiv_id']}"
+    return str(item)
+
+
 def describe_event(kind: str, data: dict) -> str:
     # One line per event, for terminals and logs.
     if kind == "status":
@@ -88,7 +101,7 @@ def describe_event(kind: str, data: dict) -> str:
         )
     parts = []
     for key, value in data.items():
-        text = "; ".join(value) if isinstance(value, list) else str(value)
+        text = "; ".join(map(_short, value)) if isinstance(value, list) else str(value)
         if key == "stopped":  # already a sentence: "used 6 of 2 LLM calls"
             parts.append(text)
         elif key != "step":
@@ -110,6 +123,12 @@ def format_report(result: dict) -> str:
             for p in kept
         ),
     ]
+    for edit in result.get("edits", []):
+        lines.append(
+            f"  reviewer {edit['action']} {edit['arxiv_id']} "
+            f"({edit['label'].replace('_', ' ')}): {edit['title'][:60]}"
+        )
+    lines += [f"  ignored edit: {note}" for note in result.get("ignored_edits", [])]
     if "read" in result:
         sources = dict(Counter(r["source"] for r in result["read"]))
         rejected = sum(len(r["rejected"]) for r in result["read"])
@@ -150,4 +169,28 @@ def format_report(result: dict) -> str:
             f"{authors}, {paper['published'][:4]}"
         )
     lines += [f"\nREMOVED (still failed the check): {s}" for s in result["removed"]]
+    return "\n".join(lines)
+
+
+def format_review_request(request: dict, dropped_shown: int = 15) -> str:
+    # What a person sees at the pause: what will be read, and the best of what
+    # won't, with the Screener's score and reason for each.
+    def card(paper: dict) -> list[str]:
+        return [
+            (
+                f"  {paper['score']:2}  {paper['arxiv_id']}  [{paper['via']}]  "
+                f"{paper['title'][:70]}"
+            ),
+            f"          {paper['reason']}",
+        ]
+
+    kept, dropped = request["kept"], request["dropped"]
+    lines = [f"Question: {request['question']}", f"\nKept, will be read ({len(kept)}):"]
+    for paper in kept:
+        lines += card(paper)
+    lines.append(
+        f"\nDropped (top {min(dropped_shown, len(dropped))} of {len(dropped)}):"
+    )
+    for paper in dropped[:dropped_shown]:
+        lines += card(paper)
     return "\n".join(lines)

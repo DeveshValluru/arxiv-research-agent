@@ -5,7 +5,8 @@
 Takes queued jobs (scripts/review_jobs.py submit) one at a time, until you
 stop it with Ctrl+C. Only one worker can run: reviews download from arXiv,
 which allows one connection at a time. A job interrupted by stopping the
-worker goes back in the queue when the worker starts again.
+worker goes back in the queue when the worker starts again, and continues
+from its last finished step.
 """
 
 import asyncio
@@ -15,11 +16,12 @@ import sys
 
 from langfuse import get_client
 
-from arxiv_agent.review.graph import EventHandler, run_review
+from arxiv_agent.review.checkpoints import postgres_checkpointer
+from arxiv_agent.review.graph import EventHandler, ReviewRun, run_review
 from arxiv_agent.review.setup import ReviewSettings, open_review_graph
 from arxiv_agent.review.state import Budget
 from arxiv_agent.review.worker import ReviewWorker
-from arxiv_agent.storage.job_store import JobStore
+from arxiv_agent.storage.job_store import Job, JobStore
 
 
 async def main() -> None:
@@ -40,29 +42,33 @@ async def main() -> None:
 
     langfuse = get_client()
 
-    async with open_review_graph(ReviewSettings(), langfuse) as graph:
+    # Checkpoints in Postgres: a paused job, or one whose worker died, carries
+    # on from where it stopped (the thread id is the job id).
+    with postgres_checkpointer(os.environ["DATABASE_URL"]) as checkpointer:
+        async with open_review_graph(ReviewSettings(), langfuse, checkpointer) as graph:
 
-        async def run(
-            question: str, budget: Budget, on_event: EventHandler, job_id: str
-        ):
-            try:
-                return await run_review(
-                    question,
-                    graph,
-                    budget=budget,
-                    on_event=on_event,
-                    session_id=job_id,
-                    langfuse=langfuse,
-                )
-            finally:
-                langfuse.flush()
+            async def run(job: Job, on_event: EventHandler) -> ReviewRun:
+                try:
+                    return await run_review(
+                        job.question,
+                        graph,
+                        thread_id=job.job_id,
+                        budget=Budget.model_validate(job.budget),
+                        pause_for_review=job.pause_for_review,
+                        decision=job.decision,
+                        on_event=on_event,
+                        langfuse=langfuse,
+                    )
+                finally:
+                    langfuse.flush()
 
-        print("Worker ready, waiting for jobs. Ctrl+C to stop.", flush=True)
-        await ReviewWorker(jobs, run).run_forever()
+            worker = ReviewWorker(jobs, run, forget=checkpointer.adelete_thread)
+            print("Worker ready, waiting for jobs. Ctrl+C to stop.", flush=True)
+            await worker.run_forever()
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Worker stopped. A job it was running will be retried on restart.")
+        print("Worker stopped. A job it was running continues when it restarts.")
