@@ -1,4 +1,4 @@
-"""arXiv as an MCP server: search for papers and look them up by id.
+"""arXiv as an MCP server: search papers, look them up, and read their bibliographies.
 
     uv run --env-file .env python -m arxiv_agent.mcp_servers.arxiv_server
 
@@ -22,6 +22,7 @@ from arxiv_agent.clients.arxiv import (
     ArxivUnavailableError,
     PaperSummary,
 )
+from arxiv_agent.ingestion.html_parser import parse_arxiv_html
 from arxiv_agent.retrieval.bm25 import STOPWORDS
 
 # A quoted phrase, or one word (letters and digits, keeping inner - and .,
@@ -34,6 +35,8 @@ MAX_RESULTS = 20
 MAX_IDS = 20
 ABSTRACT_CHARS = 600
 AUTHORS_SHOWN = 3
+REFERENCE_CHARS = 200
+MAX_REFERENCES = 100
 
 
 def _phrase(text: str) -> str | None:
@@ -92,12 +95,27 @@ class MetadataResult(BaseModel):
     not_found: list[str]
 
 
+class Reference(BaseModel):
+    text: str  # the bibliography entry, shortened
+    arxiv_id: str | None  # set when the entry links to an arXiv paper
+
+
+class ReferencesResult(BaseModel):
+    arxiv_id: str
+    total: int  # entries in the bibliography
+    with_arxiv_id: int
+    references: list[Reference]
+
+
+def shorten(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0] + " …"
+
+
 def paper_info(paper: PaperSummary) -> PaperInfo:
     # Trimmed: a model choosing papers needs the gist, not 300-word abstracts
     # and 40-author lists in its context.
-    abstract = paper.abstract
-    if len(abstract) > ABSTRACT_CHARS:
-        abstract = abstract[:ABSTRACT_CHARS].rsplit(" ", 1)[0] + " …"
     return PaperInfo(
         arxiv_id=paper.arxiv_id,
         version=paper.version,
@@ -106,7 +124,7 @@ def paper_info(paper: PaperSummary) -> PaperInfo:
         author_count=len(paper.authors),
         published=paper.published.date().isoformat(),
         primary_category=paper.primary_category,
-        abstract=abstract,
+        abstract=shorten(paper.abstract, ABSTRACT_CHARS),
     )
 
 
@@ -122,7 +140,8 @@ def create_server(client: ArxivClient | None = None) -> MCPServer:
     server = MCPServer(
         "arxiv",
         instructions=(
-            "Search arXiv for research papers and look up papers by arXiv id. "
+            "Search arXiv for research papers, look up papers by arXiv id, and "
+            "read the list of papers a paper cites. "
             "Results are trimmed: abstracts are shortened and only the first "
             "authors are listed."
         ),
@@ -199,6 +218,60 @@ def create_server(client: ArxivClient | None = None) -> MCPServer:
             else:
                 papers.append(paper_info(paper))
         return MetadataResult(papers=papers, not_found=not_found)
+
+    @server.tool()
+    def get_references(
+        arxiv_id: Annotated[
+            str,
+            Field(description="arXiv id such as '2411.15594' or '2411.15594v6'."),
+        ],
+        arxiv_only: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Only return references that have an arXiv id, so they can be "
+                    "looked up with get_metadata."
+                )
+            ),
+        ] = False,
+        max_results: Annotated[int, Field(ge=1, le=MAX_REFERENCES)] = 30,
+    ) -> ReferencesResult:
+        """List the papers a paper cites, read from its own bibliography on arXiv.
+
+        Each entry is the shortened bibliography text, plus an arXiv id when the
+        cited work is on arXiv. Entries come in the order the bibliography lists
+        them (usually alphabetical), not by importance.
+        """
+        if not ARXIV_ID_PATTERN.match(arxiv_id):
+            raise ToolError(
+                f"arxiv_id must look like '2411.15594' or '2411.15594v6', "
+                f"got {arxiv_id!r}"
+            )
+        bare = VERSION_SUFFIX.sub("", arxiv_id)
+        version = int(arxiv_id[len(bare) + 1 :]) if arxiv_id != bare else None
+        try:
+            html = arxiv.fetch_html(bare, version)
+        except ArxivUnavailableError as exc:
+            raise _unavailable() from exc
+        except ArxivError as exc:
+            raise ToolError(f"arXiv rejected the request: {exc}") from exc
+        if html is None:
+            raise ToolError(
+                f"arXiv has no HTML version of {arxiv_id}, so its bibliography "
+                "can't be read. get_metadata still works for it."
+            )
+
+        references = parse_arxiv_html(html).references
+        picked = [r for r in references if r.arxiv_id] if arxiv_only else references
+        return ReferencesResult(
+            arxiv_id=arxiv_id,
+            total=len(references),
+            with_arxiv_id=sum(r.arxiv_id is not None for r in references),
+            references=[
+                Reference(text=shorten(r.text, REFERENCE_CHARS), arxiv_id=r.arxiv_id)
+                for r in picked[:max_results]
+            ],
+        )
 
     return server
 

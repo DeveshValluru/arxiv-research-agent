@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from mcp import Client
@@ -8,8 +9,13 @@ from arxiv_agent.clients.arxiv import ArxivUnavailableError, PaperSummary
 from arxiv_agent.mcp_servers.arxiv_server import (
     ABSTRACT_CHARS,
     MAX_RESULTS,
+    REFERENCE_CHARS,
     build_search_query,
     create_server,
+)
+
+FIXTURE_HTML = (Path(__file__).parent / "fixtures" / "latexml_minimal.html").read_text(
+    encoding="utf-8"
 )
 
 
@@ -30,11 +36,21 @@ def make_paper(
 
 
 class FakeArxiv:
-    def __init__(self, papers=(), error: Exception | None = None) -> None:
+    def __init__(
+        self, papers=(), error: Exception | None = None, html: str | None = None
+    ) -> None:
         self.papers = {paper.arxiv_id: paper for paper in papers}
         self.error = error
+        self.html = html
         self.searches: list[tuple[str, int]] = []
         self.lookups: list[list[str]] = []
+        self.fetches: list[tuple[str, int | None]] = []
+
+    def fetch_html(self, arxiv_id, version=None):
+        self.fetches.append((arxiv_id, version))
+        if self.error:
+            raise self.error
+        return self.html
 
     def search_papers(self, query, max_results=5):
         self.searches.append((query, max_results))
@@ -131,7 +147,7 @@ def test_repeated_terms_appear_once():
 def test_server_offers_two_tools_with_enforced_limits():
     tools = {tool.name: tool for tool in list_tools()}
 
-    assert set(tools) == {"search_papers", "get_metadata"}
+    assert set(tools) == {"search_papers", "get_metadata", "get_references"}
     max_results = tools["search_papers"].input_schema["properties"]["max_results"]
     assert (max_results["minimum"], max_results["maximum"]) == (1, MAX_RESULTS)
     assert (
@@ -208,3 +224,49 @@ def test_get_metadata_with_only_bad_ids_skips_arxiv():
     result = call(arxiv, "get_metadata", {"arxiv_ids": ["nope"]})
     assert result.structured_content == {"papers": [], "not_found": ["nope"]}
     assert arxiv.lookups == []
+
+
+def test_get_references_reads_the_bibliography():
+    arxiv = FakeArxiv(html=FIXTURE_HTML)
+
+    result = call(arxiv, "get_references", {"arxiv_id": "2499.00001v3"})
+
+    assert not result.is_error
+    assert arxiv.fetches == [("2499.00001", 3)]  # bare id + version, as arXiv needs
+    data = result.structured_content
+    assert (data["total"], data["with_arxiv_id"]) == (3, 2)
+    assert [ref["arxiv_id"] for ref in data["references"]] == [
+        "2306.05685",
+        "2305.18248",
+        None,
+    ]
+    assert all(len(ref["text"]) <= REFERENCE_CHARS + 2 for ref in data["references"])
+
+
+def test_get_references_can_keep_only_arxiv_papers():
+    arxiv = FakeArxiv(html=FIXTURE_HTML)
+
+    result = call(
+        arxiv,
+        "get_references",
+        {"arxiv_id": "2499.00001", "arxiv_only": True, "max_results": 1},
+    )
+
+    assert arxiv.fetches == [("2499.00001", None)]
+    data = result.structured_content
+    assert data["total"] == 3  # the whole bibliography is still counted
+    assert [ref["arxiv_id"] for ref in data["references"]] == ["2306.05685"]
+
+
+def test_get_references_without_html_points_to_get_metadata():
+    result = call(FakeArxiv(html=None), "get_references", {"arxiv_id": "2499.00001"})
+    assert result.is_error
+    assert "no HTML version" in result.content[0].text
+    assert "get_metadata" in result.content[0].text
+
+
+def test_get_references_rejects_a_malformed_id_before_arxiv():
+    arxiv = FakeArxiv(html=FIXTURE_HTML)
+    result = call(arxiv, "get_references", {"arxiv_id": "../../etc/passwd"})
+    assert result.is_error
+    assert arxiv.fetches == []
