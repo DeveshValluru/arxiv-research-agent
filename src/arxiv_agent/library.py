@@ -67,7 +67,9 @@ class Library:
                 self._count_tokens,
                 self._cache_dir,
             )
-        except ArxivError as exc:  # one paper failing shouldn't sink the review
+        except (ArxivError, ValueError) as exc:
+            # One paper failing shouldn't sink the review: arXiv down, or a
+            # page we can't parse or embed (ValueError from both).
             logger.warning("couldn't ingest %sv%d: %s", arxiv_id, version, exc)
             return "unavailable"
         return "full_text" if report.status == "ingested" else "abstract_only"

@@ -1,4 +1,5 @@
 import random
+import time
 
 from arxiv_agent.storage.job_store import JobStore
 
@@ -101,7 +102,12 @@ def test_only_one_connection_can_hold_the_worker_lock(connect):
     assert first.try_lock_worker(key)
     assert not second.try_lock_worker(key)
     first.close()  # the worker dies: Postgres releases its lock
-    assert second.try_lock_worker(key)
+    # ...once its server-side session has ended, a moment after the client
+    # disconnects (this failed once under load when checked immediately).
+    deadline = time.monotonic() + 5
+    while not second.try_lock_worker(key):
+        assert time.monotonic() < deadline, "the lock was never released"
+        time.sleep(0.05)
 
 
 # --- the pause for review --------------------------------------------------------

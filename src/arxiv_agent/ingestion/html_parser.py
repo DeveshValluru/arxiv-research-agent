@@ -171,6 +171,9 @@ def parse_arxiv_html(html: str) -> ParsedPaper:
     title_tag = soup.select_one("h1.ltx_title_document")
     if title_tag is None:
         raise ValueError("not an arXiv HTML paper: no document title found")
+    # \thanks footnotes (affiliations, emails) sit inside the title element.
+    for note in title_tag.select(".ltx_pubnotes, .ltx_note"):
+        note.decompose()
 
     hidden_text = _remove_hidden_text(soup)
     _replace_math_with_latex(soup)

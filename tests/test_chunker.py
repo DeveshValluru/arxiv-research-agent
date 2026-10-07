@@ -3,14 +3,19 @@ from pathlib import Path
 import pytest
 
 from arxiv_agent.ingestion.chunker import (
+    HEADER_TOKENS,
+    MAX_TOKENS,
     _approx_tokens,
     _chunk_texts,
+    _fit,
     _pack,
     _section_paths,
     _split_sentences,
+    _truncate,
     chunk_paper,
 )
 from arxiv_agent.ingestion.html_parser import parse_arxiv_html
+from arxiv_agent.ingestion.models import ParsedPaper, Section, Table
 
 FIXTURES = Path(__file__).parent / "fixtures"
 PAPER = parse_arxiv_html(
@@ -216,3 +221,44 @@ def test_real_paper_chunks():
     assert all(c.token_count <= 512 for c in chunks)
     assert [c.kind for c in chunks[:2]] == ["abstract", "abstract"]
     assert sum(c.kind == "table" for c in chunks) == 4
+
+
+def test_truncate_keeps_the_leading_words_that_fit():
+    assert _truncate("short enough", 10, _approx_tokens) == "short enough"
+    cut = _truncate("word " * 200, 20, _approx_tokens)
+    assert cut.endswith(" …") and _approx_tokens(cut) <= 20
+
+
+def test_fit_cuts_a_word_with_no_spaces_into_parts_that_fit():
+    blob = "x" * 1000  # a long formula or URL
+    parts = _fit(blob, 50, _approx_tokens)
+    assert "".join(parts) == blob
+    assert all(_approx_tokens(part) <= 50 for part in parts)
+
+
+def test_every_chunk_fits_even_with_a_long_title_and_a_prompt_table():
+    # Seen on real pages: a footnote-swollen title, and a whole prompt used as
+    # a table's header row. Both pushed chunks past the embedder's limit.
+    paper = ParsedPaper(
+        title="A Title " + "with an affiliation footnote " * 60,
+        abstract="An abstract.",
+        sections=[Section(title="Method", level=1, text="Some text. " * 400)],
+        tables=[
+            Table(
+                section="Appendix",
+                caption="Table 6: Prompts used.",
+                markdown="| "
+                + "You will be provided with two texts. " * 150
+                + " |\n|---|",
+            )
+        ],
+        references=[],
+        hidden_text=[],
+    )
+    limit = MAX_TOKENS + HEADER_TOKENS + 5  # the body, the header, two line breaks
+
+    chunks = chunk_paper(paper, "2499.00001", 1)
+
+    assert all(_approx_tokens(chunk.embed_text) <= limit for chunk in chunks)
+    table = next(chunk for chunk in chunks if chunk.kind == "table")
+    assert "You will be provided" in table.text  # the full table is still kept

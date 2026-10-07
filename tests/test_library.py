@@ -141,3 +141,10 @@ def test_latest_metadata_stands_in_for_an_older_version(store, tmp_path):
     assert library.ensure_ingested("2499.00001", 1) == "full_text"
     assert store.get_paper("2499.00001", 1).title == PAPER.title
     assert client.fetched == [("2499.00001", 1)]
+
+
+def test_a_page_that_cant_be_parsed_makes_the_paper_unavailable_not_an_error(
+    store, tmp_path
+):
+    library = make_library(store, FakeClient(html="<html>not a paper</html>"), tmp_path)
+    assert library.ensure_ingested("2499.00001", 1) == "unavailable"

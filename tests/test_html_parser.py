@@ -120,3 +120,14 @@ def test_real_page():
     assert "\\displaystyle" not in all_text
     assert "\u200b" not in all_text
     assert paper.hidden_text == []
+
+
+def test_title_leaves_out_thanks_footnotes():
+    # Seen on a real page: affiliations and emails inside the title element.
+    html = (
+        '<h1 class="ltx_title ltx_title_document">Evaluating Judge Bias'
+        '<span class="ltx_pubnotes"><span class="ltx_pubnote ltx_role_thanks">'
+        '<span class="ltx_note_name">Thanks:</span>C. Chen is with NTU. '
+        "E-mail: chen@ntu.edu.sg</span></span></h1>"
+    )
+    assert parse_arxiv_html(html).title == "Evaluating Judge Bias"

@@ -20,7 +20,10 @@ ABBREVIATIONS = (
     "etc.",
 )
 MAX_TOKENS = 350
-CHUNKER_VERSION = 3
+# 4: table headers, space-less words and chunk headers capped (found by the
+# 5.4 eval: chunks over the embedder's 512-token limit)
+CHUNKER_VERSION = 4
+HEADER_TOKENS = 100  # title and section path, in front of each embedded chunk
 # Stored chunks are shared by every embedder, so they're always measured with this
 # one tokenizer. CHUNKER_VERSION covers the algorithm and these settings: bump it
 # when MAX_TOKENS or CHUNK_TOKENIZER changes, so stored chunks get rebuilt.
@@ -77,6 +80,32 @@ def _pack(
     return chunks
 
 
+def _fit(text: str, max_tokens: int, count_tokens: Callable[[str], int]) -> list[str]:
+    # A piece with no spaces left to split at (a long formula, a URL): halve it
+    # by characters until each part fits. A single character always does.
+    if count_tokens(text) <= max_tokens:
+        return [text]
+    middle = len(text) // 2
+    return _fit(text[:middle], max_tokens, count_tokens) + _fit(
+        text[middle:], max_tokens, count_tokens
+    )
+
+
+def _truncate(text: str, max_tokens: int, count_tokens: Callable[[str], int]) -> str:
+    # The longest run of leading words that fits, marked as cut.
+    if count_tokens(text) <= max_tokens:
+        return text
+    words = text.split(" ")
+    low, high = 0, len(words)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if count_tokens(" ".join(words[:middle]) + " …") <= max_tokens:
+            low = middle
+        else:
+            high = middle - 1
+    return " ".join(words[:low]) + " …"
+
+
 def _sentence_units(
     paragraph: str, max_tokens: int, count_tokens: Callable[[str], int]
 ) -> list[str]:
@@ -85,7 +114,8 @@ def _sentence_units(
         if count_tokens(sentence) <= max_tokens:
             units.append(sentence)
         else:
-            units.extend(sentence.split())
+            for word in sentence.split():
+                units.extend(_fit(word, max_tokens, count_tokens))
     return units
 
 
@@ -110,8 +140,12 @@ def _chunk_texts(
     return chunks
 
 
-def _with_header(title: str, path: list[str], body: str) -> str:
-    return f"{title}\n{' > '.join(path)}\n\n{body}"
+def _with_header(
+    title: str, path: list[str], body: str, count_tokens: Callable[[str], int]
+) -> str:
+    # Capped, so a body of max_tokens plus its header always fits the embedder.
+    header = _truncate(f"{title}\n{' > '.join(path)}", HEADER_TOKENS, count_tokens)
+    return f"{header}\n\n{body}"
 
 
 def chunk_paper(
@@ -130,7 +164,7 @@ def chunk_paper(
                     "abstract",
                     ["Abstract"],
                     text,
-                    _with_header(paper.title, ["Abstract"], text),
+                    _with_header(paper.title, ["Abstract"], text, count_tokens),
                 )
             )
 
@@ -139,15 +173,25 @@ def chunk_paper(
             continue
 
         for text in _chunk_texts(section.text, max_tokens, count_tokens):
-            pieces.append(("text", path, text, _with_header(paper.title, path, text)))
+            embed_text = _with_header(paper.title, path, text, count_tokens)
+            pieces.append(("text", path, text, embed_text))
 
     for table in paper.tables:
         path = [table.section] if table.section else []
         columns = table.markdown.split("\n")[0]
         text = f"{table.caption}\n\n{table.markdown}"
-        description = f"{table.caption}\nColumns: {columns}"
+        # Capped: some papers put whole prompts in a "table", and its header
+        # row ran to 987 tokens, past what the embedder takes (an eval found it).
+        description = _truncate(
+            f"{table.caption}\nColumns: {columns}", max_tokens, count_tokens
+        )
         pieces.append(
-            ("table", path, text, _with_header(paper.title, path, description))
+            (
+                "table",
+                path,
+                text,
+                _with_header(paper.title, path, description, count_tokens),
+            )
         )
 
     return [
