@@ -22,6 +22,7 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from psycopg.rows import dict_row
 
+from arxiv_agent.guardrails.output import Blocked, Violation
 from arxiv_agent.llm import Usage
 from arxiv_agent.review.state import (
     Budget,
@@ -46,6 +47,8 @@ STATE_TYPES = (
     SentenceCheck,
     Critique,
     Evidence,
+    Violation,
+    Blocked,
 )
 
 

@@ -30,6 +30,7 @@ RESULT_FIELDS = (
     "references",
     "evidence",
     "removed",
+    "blocked",
     "spent",
     "stopped",
 )
@@ -61,6 +62,7 @@ def step_summary(node: str, update: dict | None) -> dict:
         summary["problems"] = len(update["critique"].problems)
     if "review" in update:
         summary["removed"] = len(update["removed"])
+        summary["blocked"] = len(update.get("blocked", []))
     if "stopped" in update:
         summary["stopped"] = update["stopped"]
     return summary
@@ -169,6 +171,11 @@ def format_report(result: dict) -> str:
             f"{authors}, {paper['published'][:4]}"
         )
     lines += [f"\nREMOVED (still failed the check): {s}" for s in result["removed"]]
+    for blocked in result.get("blocked", []):
+        reasons = "; ".join(v["detail"] for v in blocked["violations"])
+        lines.append(
+            f"\nBLOCKED by the output guard ({reasons}): {blocked['sentence']}"
+        )
     return "\n".join(lines)
 
 

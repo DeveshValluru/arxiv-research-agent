@@ -9,6 +9,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict
 
+from arxiv_agent.guardrails.output import Blocked, OutputGuard
 from arxiv_agent.review.state import (
     PASSING,
     Claim,
@@ -124,18 +125,25 @@ def render(sentence: str, claims: dict[str, Claim]) -> str:
     return CITATION_RUN.sub(cite, sentence)
 
 
-def finalize(state: ReviewState) -> ReviewState:
+def finalize(state: ReviewState, guard: OutputGuard | None = None) -> ReviewState:
     # The review keeps only sentences the Critic accepted: after the last
     # allowed rewrite, a rejected sentence is removed rather than shipped.
+    # Then the output guard (layer 4) checks each one as it will be shown: a
+    # sentence that fails is blocked, never shipped.
     claims = {claim.label: claim for claim in state["claims"]}
     papers = {paper.arxiv_id: paper for paper in state["kept"]}
     paragraphs: dict[int, list[str]] = {}
     evidence, removed, cited = [], [], []
+    blocked: list[Blocked] = []
     for check in state["critique"].checks:
         if check.verdict not in PASSING:
             removed.append(check.sentence)
             continue
         text = render(check.sentence, claims)
+        violations = guard.check(text, allowed_ids=set(papers)) if guard else []
+        if violations:
+            blocked.append(Blocked(sentence=text, violations=violations))
+            continue
         paragraphs.setdefault(check.paragraph, []).append(text)
         used = [claims[label] for label in check.labels]
         evidence.append(Evidence(sentence=text, claims=used))
@@ -147,6 +155,7 @@ def finalize(state: ReviewState) -> ReviewState:
         "references": [papers[arxiv_id] for arxiv_id in cited],
         "evidence": evidence,
         "removed": removed,
+        "blocked": blocked,
     }
 
 

@@ -5,6 +5,7 @@ from huggingface_hub import InferenceClient
 from langfuse import Langfuse, get_client, propagate_attributes
 from pydantic import BaseModel, ConfigDict
 
+from arxiv_agent.guardrails.output import OutputGuard
 from arxiv_agent.llm import chat_with_failover
 from arxiv_agent.qa.checker import REFUSAL, CheckedAnswer, check_answer
 from arxiv_agent.retrieval.retriever import Retriever
@@ -103,6 +104,7 @@ class Answerer:
         self._clients = clients or {p: InferenceClient(provider=p) for p in providers}
         self._langfuse = langfuse or get_client()
         self._sleep = sleep
+        self._guard = OutputGuard([SYSTEM_PROMPT])
 
     def ask(self, question: str, arxiv_id: str, version: int) -> QAResult:
         paper = f"{arxiv_id}v{version}"
@@ -127,7 +129,9 @@ class Answerer:
             )
 
             choice = response.choices[0]
-            answer = check_answer(choice.message.content or "", n_sources=len(hits))
+            answer = check_answer(
+                choice.message.content or "", n_sources=len(hits), guard=self._guard
+            )
             if choice.finish_reason == "length":
                 answer = answer.model_copy(
                     update={
