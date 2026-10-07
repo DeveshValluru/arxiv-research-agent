@@ -127,10 +127,16 @@ class ChatModel:
         clients: dict[str, InferenceClient] | None = None,
         langfuse: Langfuse | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        timeout: float | None = None,
     ) -> None:
+        # timeout (seconds per attempt): a provider that hangs is treated like
+        # one that's down, so the call moves on to the next provider. Measured:
+        # an overloaded provider took 60-120 s just to return a 429 or 504.
         self.model = model
         self._providers = providers
-        self._clients = clients or {p: InferenceClient(provider=p) for p in providers}
+        self._clients = clients or {
+            p: InferenceClient(provider=p, timeout=timeout) for p in providers
+        }
         self._langfuse = langfuse or get_client()
         self._sleep = sleep
 

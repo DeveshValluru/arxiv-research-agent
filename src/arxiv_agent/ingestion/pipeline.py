@@ -7,10 +7,9 @@ from pydantic import BaseModel, ConfigDict
 from arxiv_agent.clients.arxiv import ArxivClient, PaperSummary
 from arxiv_agent.ingestion.chunker import CHUNKER_VERSION, chunk_paper
 from arxiv_agent.ingestion.embedder import Embedder
+from arxiv_agent.ingestion.html_cache import HTML_CACHE_DIR, load_html
 from arxiv_agent.ingestion.html_parser import parse_arxiv_html
 from arxiv_agent.storage.chunk_store import ChunkStore
-
-HTML_CACHE_DIR = Path("data/html")
 
 
 class IngestReport(BaseModel):
@@ -21,22 +20,6 @@ class IngestReport(BaseModel):
     status: Literal["ingested", "no_html"]
     chunks_written: int = 0
     vectors_written: int = 0
-
-
-def load_html(
-    client: ArxivClient, arxiv_id: str, version: int, cache_dir: Path = HTML_CACHE_DIR
-) -> str | None:
-    # The raw page is the expensive layer (arXiv rate limits), so it's kept on
-    # disk: re-parsing and re-chunking from it take milliseconds.
-    path = cache_dir / f"{arxiv_id.replace('/', '_')}v{version}.html"
-    if path.exists():
-        return path.read_text(encoding="utf-8")
-
-    html = client.fetch_html(arxiv_id, version)
-    if html is not None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(html, encoding="utf-8")
-    return html
 
 
 def ingest_paper(
