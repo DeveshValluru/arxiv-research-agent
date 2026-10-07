@@ -22,6 +22,7 @@ from arxiv_agent.evals.retrieval import (
 )
 from arxiv_agent.evals.runner import EvalItem, load_items
 from arxiv_agent.ingestion.embedder import BGE_QUERY_PREFIX, DEFAULT_MODEL_ID, Embedder
+from arxiv_agent.retrieval.bm25 import BM25Index
 from arxiv_agent.storage.chunk_store import ChunkStore
 
 EVAL_SETS = [Path("evals/qa_qasper.jsonl"), Path("evals/qa_survey.jsonl")]
@@ -43,7 +44,20 @@ def make_searches(store: ChunkStore, embedder: Embedder) -> dict[str, Search]:
         hits = store.keyword_search(question, k=DEPTH, papers=[paper])
         return [hit.chunk.chunk_id for hit in hits]
 
-    return {"dense": dense, "keyword": keyword}
+    bm25_indexes: dict[tuple[str, int], tuple[list[str], BM25Index]] = {}
+
+    def bm25(question: str, paper: tuple[str, int]) -> list[str]:
+        # One index per paper, built on first use: IDF is measured within it.
+        if paper not in bm25_indexes:
+            chunks = store.get_chunks(*paper)
+            bm25_indexes[paper] = (
+                [chunk.chunk_id for chunk in chunks],
+                BM25Index([chunk.text for chunk in chunks]),
+            )
+        ids, index = bm25_indexes[paper]
+        return [ids[i] for i, _ in index.top(question, DEPTH)]
+
+    return {"dense": dense, "keyword": keyword, "bm25": bm25}
 
 
 def source_recall(
