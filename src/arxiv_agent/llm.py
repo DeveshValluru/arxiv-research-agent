@@ -26,6 +26,32 @@ class LLMOutputError(Exception):
     pass
 
 
+class Usage(BaseModel):
+    # What LLM calls used. cost_usd only adds up what providers report:
+    # deepinfra reports a cost per call, together doesn't, so it's a lower bound.
+    llm_calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cost_usd: float = 0.0
+
+    @property
+    def tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
+
+    def __add__(self, other: "Usage") -> "Usage":
+        return Usage(
+            llm_calls=self.llm_calls + other.llm_calls,
+            prompt_tokens=self.prompt_tokens + other.prompt_tokens,
+            completion_tokens=self.completion_tokens + other.completion_tokens,
+            cost_usd=self.cost_usd + other.cost_usd,
+        )
+
+
+class Completion(BaseModel):
+    text: str  # thinking blocks already stripped
+    usage: Usage
+
+
 def is_transient(exc: Exception) -> bool:
     # Worth retrying: network trouble, timeouts, rate limits, overloaded or broken
     # servers. Not worth it: our own mistakes (a bad request, a wrong model name).
@@ -147,7 +173,9 @@ class ChatModel:
         name: str,
         max_tokens: int = 800,
         temperature: float = 0.0,
-    ) -> str:
+    ) -> Completion:
+        # Returns the usage with the text, so every caller has it in hand to
+        # count against the budget.
         response, _, _ = await asyncio.to_thread(
             chat_with_failover,
             clients=self._clients,
@@ -160,4 +188,13 @@ class ChatModel:
             max_tokens=max_tokens,
             temperature=temperature,
         )
-        return strip_thinking(response.choices[0].message.content or "")
+        usage = response.usage
+        return Completion(
+            text=strip_thinking(response.choices[0].message.content or ""),
+            usage=Usage(
+                llm_calls=1,
+                prompt_tokens=usage.prompt_tokens if usage else 0,
+                completion_tokens=usage.completion_tokens if usage else 0,
+                cost_usd=getattr(usage, "estimated_cost", None) or 0.0,
+            ),
+        )

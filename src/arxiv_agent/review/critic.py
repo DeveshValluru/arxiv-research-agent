@@ -14,6 +14,7 @@ from arxiv_agent.llm import (
     ChatModel,
     LLMOutputError,
     LLMUnavailableError,
+    Usage,
     parse_json_object,
 )
 from arxiv_agent.review.citations import Sentence, code_check, parse_draft
@@ -70,16 +71,15 @@ class Critic:
             checks = [code_check(sentence, claims) for sentence in sentences]
             # Only sentences that pass the free checks go to the judge.
             limit = asyncio.Semaphore(self._concurrency)
-            judged = iter(
-                await asyncio.gather(
-                    *(
-                        self._judge_sentence(sentence, claims, limit)
-                        for sentence, check in zip(sentences, checks, strict=True)
-                        if check is None
-                    )
+            judged = await asyncio.gather(
+                *(
+                    self._judge_sentence(sentence, claims, limit)
+                    for sentence, check in zip(sentences, checks, strict=True)
+                    if check is None
                 )
             )
-            checks = [check or next(judged) for check in checks]
+            verdicts = iter(check for check, _ in judged)
+            checks = [check or next(verdicts) for check in checks]
             if not checks:
                 checks = [
                     SentenceCheck(
@@ -99,7 +99,10 @@ class Critic:
                 },
                 level="WARNING" if critique.problems else None,
             )
-        return {"critique": critique}
+        return {
+            "critique": critique,
+            "spent": sum((usage for _, usage in judged), Usage()),
+        }
 
     def _verdict(self, checks: list[SentenceCheck], state: ReviewState) -> str:
         if all(check.verdict in PASSING for check in checks):
@@ -109,8 +112,9 @@ class Critic:
 
     async def _judge_sentence(
         self, sentence: Sentence, claims: dict[str, Claim], limit: asyncio.Semaphore
-    ) -> SentenceCheck:
+    ) -> tuple[SentenceCheck, Usage]:
         cited = [claims[label] for label in sentence.labels]
+        usage = Usage()
         async with limit:
             try:
                 reply = await self._judge.complete(
@@ -124,16 +128,18 @@ class Critic:
                     name="critic-llm",
                     max_tokens=150,
                 )
-                judgment = parse_json_object(reply, Judgment)
+                usage = reply.usage
+                judgment = parse_json_object(reply.text, Judgment)
                 verdict, reason = judgment.verdict, judgment.reason
             except (LLMOutputError, LLMUnavailableError) as exc:
                 # The judge failing doesn't make the sentence wrong, just
                 # unchecked (like a citation check while arXiv is down).
                 verdict, reason = "unchecked", f"judge failed: {exc}"[:200]
-        return SentenceCheck(
+        check = SentenceCheck(
             paragraph=sentence.paragraph,
             sentence=sentence.text,
             labels=sentence.labels,
             verdict=verdict,
             reason=reason,
         )
+        return check, usage

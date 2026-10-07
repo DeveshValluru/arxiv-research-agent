@@ -71,8 +71,8 @@ class Synthesizer:
             name="synthesizer",
             input={"claims": len(state["claims"]), "draft": drafts + 1},
         ) as span:
-            draft = await self._llm.complete(
+            reply = await self._llm.complete(
                 messages, name="synthesizer-llm", max_tokens=self._max_tokens
             )
-            span.update(output=draft)
-        return {"draft": draft, "drafts": drafts + 1}
+            span.update(output=reply.text)
+        return {"draft": reply.text, "drafts": drafts + 1, "spent": reply.usage}

@@ -6,11 +6,13 @@ it's handed into claims, and code checks every quote it returns.
 
 import asyncio
 import re
+import time
+from collections.abc import Callable
 
 from langfuse import Langfuse, get_client
 
 from arxiv_agent.library import Library, Passage, Source
-from arxiv_agent.llm import ChatModel, LLMOutputError, parse_json_object
+from arxiv_agent.llm import ChatModel, LLMOutputError, Usage, parse_json_object
 from arxiv_agent.review.state import (
     Claim,
     ExtractedClaims,
@@ -71,12 +73,14 @@ class Reader:
         library: Library,
         passages_per_paper: int = 6,
         claims_per_paper: int = 4,
+        clock: Callable[[], float] = time.time,
         langfuse: Langfuse | None = None,
     ) -> None:
         self._llm = llm
         self._library = library
         self._passages_per_paper = passages_per_paper
         self._claims_per_paper = claims_per_paper
+        self._clock = clock
         self._langfuse = langfuse or get_client()
 
     async def read(self, state: ReviewState) -> ReviewState:
@@ -87,19 +91,28 @@ class Reader:
             input={"papers": [paper.arxiv_id for paper in papers]},
         ) as span:
             # Ingest one paper at a time (it may download from arXiv, which
-            # allows one connection at a time), then extract in parallel.
-            prepared = [await self._prepare(state["question"], p) for p in papers]
-            extracted = await asyncio.gather(
-                *(
+            # allows one connection at a time). Each paper's extraction starts
+            # as soon as it's ingested, so the model reads paper 1 while paper 2
+            # downloads. Once the budget runs out, the remaining papers are
+            # skipped: ingesting is the slow part of a review.
+            jobs: list[tuple[ScreenedPaper, Source, asyncio.Task | None]] = []
+            for paper in papers:
+                elapsed = self._clock() - state["started_at"]
+                if state["budget"].problem(state["spent"], elapsed):
+                    jobs.append((paper, "skipped", None))
+                    continue
+                source, passages = await self._prepare(state["question"], paper)
+                task = asyncio.create_task(
                     self._extract(state["question"], paper, passages)
-                    for paper, _, passages in prepared
                 )
-            )
+                jobs.append((paper, source, task))
+            await asyncio.gather(*(task for _, _, task in jobs if task))
+
             claims: list[Claim] = []
-            reports = []
-            for (paper, source, _), (found, rejected) in zip(
-                prepared, extracted, strict=True
-            ):
+            reports, spent = [], Usage()
+            for paper, source, task in jobs:
+                found, rejected, usage = task.result() if task else ([], [], Usage())
+                spent += usage
                 for claim in found:
                     label = f"K{len(claims) + 1}"
                     claims.append(claim.model_copy(update={"label": label}))
@@ -117,11 +130,11 @@ class Reader:
                     "papers": {r.arxiv_id: f"{r.source}, {r.claims}" for r in reports},
                 }
             )
-        return {"claims": claims, "read": reports}
+        return {"claims": claims, "read": reports, "spent": spent}
 
     async def _prepare(
         self, question: str, paper: ScreenedPaper
-    ) -> tuple[ScreenedPaper, Source, list[Passage]]:
+    ) -> tuple[Source, list[Passage]]:
         with self._langfuse.start_as_current_observation(
             as_type="retriever",
             name="ingest-and-retrieve",
@@ -142,35 +155,35 @@ class Reader:
             span.update(
                 output={"source": source, "passages": [p.chunk_id for p in passages]}
             )
-        return paper, source, passages
+        return source, passages
 
     async def _extract(
         self, question: str, paper: ScreenedPaper, passages: list[Passage]
-    ) -> tuple[list[Claim], list[str]]:
+    ) -> tuple[list[Claim], list[str], Usage]:
         if not passages:
-            return [], []
+            return [], [], Usage()
         labelled = {f"P{i}": passage for i, passage in enumerate(passages, start=1)}
         with self._langfuse.start_as_current_observation(
             as_type="chain", name="read-paper", input={"paper": paper.arxiv_id}
         ) as span:
+            reply = await self._llm.complete(
+                [
+                    {"role": "system", "content": READER_PROMPT},
+                    {
+                        "role": "user",
+                        "content": reading_request(
+                            question, paper.title, labelled, self._claims_per_paper
+                        ),
+                    },
+                ],
+                name="reader-llm",
+                max_tokens=200 * self._claims_per_paper,
+            )
             try:
-                reply = await self._llm.complete(
-                    [
-                        {"role": "system", "content": READER_PROMPT},
-                        {
-                            "role": "user",
-                            "content": reading_request(
-                                question, paper.title, labelled, self._claims_per_paper
-                            ),
-                        },
-                    ],
-                    name="reader-llm",
-                    max_tokens=200 * self._claims_per_paper,
-                )
-                extracted = parse_json_object(reply, ExtractedClaims)
+                extracted = parse_json_object(reply.text, ExtractedClaims)
             except LLMOutputError as exc:  # lose this paper's claims, not the review
                 span.update(level="WARNING", status_message=str(exc)[:500])
-                return [], [f"unreadable reply: {exc}"[:200]]
+                return [], [f"unreadable reply: {exc}"[:200]], reply.usage
 
             claims, rejected = [], []
             for item in extracted.claims:
@@ -200,4 +213,4 @@ class Reader:
                 output={"claims": [c.claim for c in claims], "rejected": rejected},
                 level="WARNING" if rejected else None,
             )
-        return claims, rejected
+        return claims, rejected, reply.usage

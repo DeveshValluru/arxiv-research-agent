@@ -5,18 +5,21 @@ and fake arXiv and OpenAlex clients behind the real MCP servers.
 import asyncio
 import json
 import re
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 
 from arxiv_agent.clients.arxiv import PaperSummary
 from arxiv_agent.clients.openalex import Work
 from arxiv_agent.library import Passage
+from arxiv_agent.llm import Completion, Usage
 from arxiv_agent.mcp_servers.arxiv_server import create_server as arxiv_server
 from arxiv_agent.mcp_servers.openalex_server import create_server as openalex_server
 from arxiv_agent.review.critic import Critic
 from arxiv_agent.review.graph import build_review_graph, run_review
 from arxiv_agent.review.nodes import ReviewNodes
 from arxiv_agent.review.reader import Reader
+from arxiv_agent.review.state import Budget
 from arxiv_agent.review.writer import Synthesizer
 from arxiv_agent.tools.toolbox import McpToolbox
 
@@ -150,11 +153,20 @@ class FakeOpenAlex:
 
 class FakeLibrary:
     # sources: arXiv id -> what ensure_ingested reports (default "full_text").
-    def __init__(self, sources: dict[str, str] | None = None) -> None:
+    # on_ingest: called with each arXiv id as it's ingested (to move a fake
+    # clock, or to watch what happens meanwhile).
+    def __init__(
+        self,
+        sources: dict[str, str] | None = None,
+        on_ingest: Callable[[str], None] | None = None,
+    ) -> None:
         self.sources = sources or {}
+        self.on_ingest = on_ingest
         self.ingested: list[str] = []
 
     def ensure_ingested(self, arxiv_id, version):
+        if self.on_ingest:
+            self.on_ingest(arxiv_id)
         self.ingested.append(arxiv_id)
         return self.sources.get(arxiv_id, "full_text")
 
@@ -169,11 +181,21 @@ class FakeLibrary:
 
 
 Reply = str | list[str] | Callable[[list[dict]], str]
+CALL_USAGE = Usage(llm_calls=1, prompt_tokens=100, completion_tokens=10)
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 1_000.0
+
+    def __call__(self) -> float:
+        return self.now
 
 
 class FakeChat:
     # Replies by call name: a fixed string, a list used in order (the last one
-    # repeats), or a function of the messages. Records every call.
+    # repeats), or a function of the messages. Records every call; each one
+    # "uses" CALL_USAGE.
     def __init__(self, replies: dict[str, Reply]) -> None:
         self.replies = replies
         self.calls: list[tuple[str, list[dict]]] = []
@@ -182,10 +204,12 @@ class FakeChat:
         self.calls.append((name, messages))
         reply = self.replies[name]
         if callable(reply):
-            return reply(messages)
-        if isinstance(reply, list):
-            return reply[min(len(self.prompts(name)), len(reply)) - 1]
-        return reply
+            text = reply(messages)
+        elif isinstance(reply, list):
+            text = reply[min(len(self.prompts(name)), len(reply)) - 1]
+        else:
+            text = reply
+        return Completion(text=text, usage=CALL_USAGE)
 
     def prompts(self, name: str) -> list[list[dict]]:
         return [messages for call_name, messages in self.calls if call_name == name]
@@ -243,6 +267,8 @@ def run(
     openalex: FakeOpenAlex | None = None,
     library: FakeLibrary | None = None,
     max_revisions: int = 2,
+    budget: Budget | None = None,
+    clock: Callable[[], float] = time.time,
     **finder_settings,
 ):
     async def go():
@@ -253,10 +279,11 @@ def run(
         async with McpToolbox(servers) as toolbox:
             graph = build_review_graph(
                 ReviewNodes(writer, toolbox, **finder_settings),
-                Reader(writer, library or FakeLibrary()),
+                Reader(writer, library or FakeLibrary(), clock=clock),
                 Synthesizer(writer),
                 Critic(judge_model or judge(), max_revisions=max_revisions),
+                clock=clock,
             )
-            return await run_review(QUESTION, graph)
+            return await run_review(QUESTION, graph, budget=budget)
 
     return asyncio.run(go())

@@ -1,6 +1,9 @@
-from typing import Literal, TypedDict
+import operator
+from typing import Annotated, Literal, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+from arxiv_agent.llm import Usage
 
 
 class Plan(BaseModel):
@@ -30,9 +33,26 @@ class Score(BaseModel):
     reason: str
 
 
+def _is_score(item: object) -> bool:
+    try:
+        Score.model_validate(item)
+    except ValidationError:
+        return False
+    return True
+
+
 class Scores(BaseModel):
-    # What the Screener must return.
+    # What the Screener must return. A malformed entry (seen live: one with no
+    # score) is dropped instead of failing the whole batch; that paper then
+    # counts as not scored.
     scores: list[Score]
+
+    @field_validator("scores", mode="before")
+    @classmethod
+    def drop_malformed(cls, items: object) -> object:
+        if not isinstance(items, list):
+            return items  # not a list at all: let validation report it
+        return [item for item in items if _is_score(item)]
 
 
 class ScreenedPaper(BaseModel):
@@ -77,7 +97,8 @@ class ReadReport(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     arxiv_id: str
-    source: Literal["full_text", "abstract_only", "unavailable"]
+    # skipped: the time budget ran out before the Reader got to it
+    source: Literal["full_text", "abstract_only", "unavailable", "skipped"]
     claims: int
     rejected: list[str]  # why extracted claims were thrown away
 
@@ -127,10 +148,36 @@ class Evidence(BaseModel):
     claims: list[Claim]
 
 
+class Budget(BaseModel):
+    # Limits for one review, checked between steps: a step can overshoot by its
+    # own size (each call's max_tokens bounds that). About 3x a measured run
+    # (36 LLM calls, 48k tokens, 4 min), so they stop runaways, not normal runs.
+    model_config = ConfigDict(extra="forbid")
+
+    max_llm_calls: int = 100
+    max_tokens: int = 150_000
+    max_seconds: float = 600
+
+    def problem(self, spent: Usage, elapsed: float) -> str | None:
+        if spent.llm_calls >= self.max_llm_calls:
+            return f"used {spent.llm_calls} of {self.max_llm_calls} LLM calls"
+        if spent.tokens >= self.max_tokens:
+            return f"used {spent.tokens:,} of {self.max_tokens:,} tokens"
+        if elapsed >= self.max_seconds:
+            return f"ran {elapsed:.0f} of {self.max_seconds:.0f} seconds"
+        return None
+
+
 class ReviewState(TypedDict, total=False):
     # Typed fields, not a shared message list: each node reads only what it
     # needs, so a paper the Screener drops can never reach a later prompt.
     question: str
+    budget: Budget
+    started_at: float  # time.time() when the review started
+    # Every node returns what its own LLM calls used; the reducer (operator.add)
+    # sums them, so even parallel calls inside a node are all counted.
+    spent: Annotated[Usage, operator.add]
+    stopped: str  # why the review stopped early, if the budget ran out
     sub_queries: list[str]
     criteria: list[str]
     candidates: list[Candidate]

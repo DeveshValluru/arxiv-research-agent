@@ -11,7 +11,7 @@ import re
 
 from langfuse import Langfuse, get_client
 
-from arxiv_agent.llm import ChatModel, parse_json_object
+from arxiv_agent.llm import ChatModel, LLMOutputError, Usage, parse_json_object
 from arxiv_agent.review.state import (
     Candidate,
     Plan,
@@ -78,9 +78,13 @@ class ReviewNodes:
                 ],
                 name="planner-llm",
             )
-            plan = parse_json_object(reply, Plan)
+            plan = parse_json_object(reply.text, Plan)
             span.update(output=plan.model_dump())
-        return {"sub_queries": plan.sub_queries, "criteria": plan.criteria}
+        return {
+            "sub_queries": plan.sub_queries,
+            "criteria": plan.criteria,
+            "spent": reply.usage,
+        }
 
     async def search(self, state: ReviewState) -> ReviewState:
         found: dict[str, Candidate] = {}
@@ -134,16 +138,29 @@ class ReviewNodes:
             replies = await asyncio.gather(
                 *(self._score(state, batch) for batch in batches)
             )
-            scores = Scores(
-                scores=[score for reply in replies for score in reply.scores]
-            )
-            kept, dropped = self.select([*screened, *self.apply_scores(new, scores)])
+            # Each reply counts only for its own batch: a score for a paper
+            # from another batch is for a paper that call never saw.
+            newly_screened = [
+                paper
+                for batch, (scores, _, _) in zip(batches, replies, strict=True)
+                for paper in self.apply_scores(batch, scores)
+            ]
+            kept, dropped = self.select([*screened, *newly_screened])
+            problems = [problem for _, _, problem in replies if problem]
             span.update(
-                output={"kept": [p.arxiv_id for p in kept], "batches": len(batches)}
+                output={"kept": [p.arxiv_id for p in kept], "batches": len(batches)},
+                level="WARNING" if problems else None,
+                status_message="; ".join(problems)[:500] or None,
             )
-        return {"kept": kept, "dropped": dropped}
+        return {
+            "kept": kept,
+            "dropped": dropped,
+            "spent": sum((usage for _, usage, _ in replies), Usage()),
+        }
 
-    async def _score(self, state: ReviewState, batch: list[Candidate]) -> Scores:
+    async def _score(
+        self, state: ReviewState, batch: list[Candidate]
+    ) -> tuple[Scores, Usage, str | None]:
         reply = await self._llm.complete(
             [
                 {"role": "system", "content": SCREENER_PROMPT},
@@ -157,7 +174,12 @@ class ReviewNodes:
             name="screener-llm",
             max_tokens=150 * len(batch),
         )
-        return parse_json_object(reply, Scores)
+        try:
+            return parse_json_object(reply.text, Scores), reply.usage, None
+        except LLMOutputError as exc:
+            # One unreadable batch shouldn't sink the review: its papers count
+            # as not scored (0), and the screener span says why.
+            return Scores(scores=[]), reply.usage, str(exc)
 
     @staticmethod
     def apply_scores(
