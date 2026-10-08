@@ -7,7 +7,7 @@ from huggingface_hub import InferenceClient
 from langfuse import Langfuse, get_client
 from pydantic import BaseModel, ValidationError
 
-from arxiv_agent.llm import chat_with_failover
+from arxiv_agent.llm import JUDGE_TIMEOUT, chat_with_failover
 
 # The judge must not share a family with the generator (Qwen): models favour
 # text that sounds like their own (self-enhancement bias).
@@ -94,7 +94,8 @@ class Judge:
         self._model = model
         self._providers = providers or JUDGE_PROVIDERS
         self._clients = clients or {
-            provider: InferenceClient(provider=provider) for provider in self._providers
+            provider: InferenceClient(provider=provider, timeout=JUDGE_TIMEOUT)
+            for provider in self._providers
         }
         self._langfuse = langfuse or get_client()
         self._sleep = sleep

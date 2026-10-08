@@ -19,6 +19,7 @@ whose worker died continue from its last finished step.
 
 import time
 from collections.abc import Callable
+from functools import partial
 from typing import NamedTuple
 
 from langfuse import Langfuse, get_client, propagate_attributes
@@ -26,16 +27,25 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
+from arxiv_agent.guardrails.output import OutputGuard
 from arxiv_agent.llm import Usage
 from arxiv_agent.review.citations import finalize
-from arxiv_agent.review.critic import Critic
+from arxiv_agent.review.critic import CRITIC_PROMPT, Critic
 from arxiv_agent.review.events import step_summary
 from arxiv_agent.review.human import HumanReview
-from arxiv_agent.review.nodes import ReviewNodes
-from arxiv_agent.review.reader import Reader
+from arxiv_agent.review.nodes import PLANNER_PROMPT, SCREENER_PROMPT, ReviewNodes
+from arxiv_agent.review.reader import READER_PROMPT, Reader
 from arxiv_agent.review.state import Budget, ReviewDecision, ReviewState, elapsed
-from arxiv_agent.review.writer import Synthesizer
+from arxiv_agent.review.writer import SYNTHESIZER_PROMPT, Synthesizer
 
+# What the output guard checks a review against for leaks: every prompt in it.
+REVIEW_PROMPTS = (
+    PLANNER_PROMPT,
+    SCREENER_PROMPT,
+    READER_PROMPT,
+    SYNTHESIZER_PROMPT,
+    CRITIC_PROMPT,
+)
 # The longest legitimate path is 17 steps (a pause and 2 rewrites); anything
 # near 50 means the routing is looping, and LangGraph raises GraphRecursionError.
 RECURSION_LIMIT = 50
@@ -111,7 +121,7 @@ def build_review_graph(
     graph.add_node("reader", reader.read)
     graph.add_node("synthesizer", synthesizer.write)
     graph.add_node("critic", critic.check)
-    graph.add_node("finalize", finalize)
+    graph.add_node("finalize", partial(finalize, guard=OutputGuard(REVIEW_PROMPTS)))
     graph.add_node("stop", control.stop)
 
     graph.add_edge(START, "start")
@@ -231,11 +241,19 @@ async def run_review(
                 "drafts": state.get("drafts", 0),
                 "verdict": critique.verdict if critique else None,
                 "removed": len(state.get("removed", [])),
+                "blocked": [b.model_dump() for b in state.get("blocked", [])],
+                "flagged": len(state.get("content_flags", [])),
                 "stopped": state.get("stopped"),
                 "spent": state["spent"].model_dump() if "spent" in state else None,
                 "review": state.get("review"),
             },
-            level="WARNING" if state.get("removed") or state.get("stopped") else None,
+            # Guard firings are flywheel signals: easy to find as warnings.
+            level="WARNING"
+            if state.get("removed")
+            or state.get("stopped")
+            or state.get("blocked")
+            or state.get("content_flags")
+            else None,
         )
         trace_id = root.trace_id
     return ReviewRun(state, None if trace_id == "0" * 32 else trace_id, pause)

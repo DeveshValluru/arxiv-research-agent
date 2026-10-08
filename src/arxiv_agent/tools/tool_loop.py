@@ -13,7 +13,7 @@ from huggingface_hub import InferenceClient
 from langfuse import Langfuse, get_client
 from pydantic import BaseModel
 
-from arxiv_agent.llm import chat_with_failover
+from arxiv_agent.llm import ANSWER_TIMEOUT, chat_with_failover
 from arxiv_agent.qa.answerer import NO_TRACE_ID
 from arxiv_agent.qa.checker import THINKING
 from arxiv_agent.tools.toolbox import McpToolbox, ToolResult
@@ -57,7 +57,9 @@ async def run_tool_loop(
     langfuse: Langfuse | None = None,
 ) -> LoopResult:
     langfuse = langfuse or get_client()
-    clients = clients or {p: InferenceClient(provider=p) for p in providers}
+    clients = clients or {
+        p: InferenceClient(provider=p, timeout=ANSWER_TIMEOUT) for p in providers
+    }
     messages: list[dict] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": question},

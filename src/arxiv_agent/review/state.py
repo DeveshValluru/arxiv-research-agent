@@ -3,6 +3,8 @@ from typing import Annotated, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from arxiv_agent.guardrails.content import ContentFlag
+from arxiv_agent.guardrails.output import Blocked
 from arxiv_agent.llm import Usage
 
 
@@ -219,6 +221,8 @@ class ReviewState(TypedDict, total=False):
     kept: list[ScreenedPaper]
     dropped: list[ScreenedPaper]
     snowballed: bool
+    # What the content guard took out of paper text before a model saw it.
+    content_flags: Annotated[list[ContentFlag], operator.add]
     edits: list[Edit]  # what the reviewer changed at the pause
     ignored_edits: list[str]  # edits that couldn't be applied, and why
     claims: list[Claim]
@@ -230,3 +234,4 @@ class ReviewState(TypedDict, total=False):
     references: list[ScreenedPaper]  # the cited papers, in order of first citation
     evidence: list[Evidence]  # every sentence -> the claims and quotes behind it
     removed: list[str]  # sentences the Critic still rejected after the last draft
+    blocked: list[Blocked]  # sentences the output guard kept out, and why

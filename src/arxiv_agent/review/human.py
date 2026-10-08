@@ -26,23 +26,29 @@ from arxiv_agent.review.state import (
 from arxiv_agent.tools.toolbox import McpToolbox
 
 
-def _card(paper: ScreenedPaper) -> dict:
-    return {
+def _card(paper: ScreenedPaper, flags: list[str]) -> dict:
+    card = {
         "arxiv_id": paper.arxiv_id,
         "title": paper.title,
         "score": paper.score,
         "reason": paper.reason,
         "via": paper.via,
     }
+    if flags:  # the person should know a paper tried to steer the Screener
+        card["flags"] = flags
+    return card
 
 
 def review_request(state: ReviewState) -> dict:
     # What the person sees, as plain JSON: it's stored on the job and shown by
     # the CLI (later the UI).
+    flags: dict[str, list[str]] = {}
+    for flag in state.get("content_flags", []):
+        flags.setdefault(flag.arxiv_id, []).append(f"{flag.reason}: {flag.text[:80]}")
     return {
         "question": state["question"],
-        "kept": [_card(paper) for paper in state["kept"]],
-        "dropped": [_card(paper) for paper in state["dropped"]],
+        "kept": [_card(p, flags.get(p.arxiv_id, [])) for p in state["kept"]],
+        "dropped": [_card(p, flags.get(p.arxiv_id, [])) for p in state["dropped"]],
     }
 
 

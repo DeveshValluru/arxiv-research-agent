@@ -9,6 +9,8 @@ import re
 
 from pydantic import BaseModel, ConfigDict
 
+from arxiv_agent.guardrails.output import Blocked, OutputGuard
+from arxiv_agent.review.numbers import missing_numbers
 from arxiv_agent.review.state import (
     PASSING,
     Claim,
@@ -21,7 +23,8 @@ from arxiv_agent.review.state import (
 LABEL = re.compile(r"K\d+")
 LABEL_GROUP = re.compile(r"\[(K\d+(?:\s*[,;]\s*K\d+)*)\]")  # [K1] or [K1, K2]
 CITATION_RUN = re.compile(r"(?:\s*\[K\d+(?:\s*[,;]\s*K\d+)*\])+")  # [K1][K2]
-LEADING_CITATIONS = re.compile(r"^(?:\[K\d+(?:\s*[,;]\s*K\d+)*\]\s*)+")
+# [K1] in reviews, [S1] in Q&A answers
+LEADING_CITATIONS = re.compile(r"^(?:\[[KS]\d+(?:\s*[,;]\s*[KS]\d+)*\]\s*)+")
 # An id or link the model wrote itself instead of citing a label.
 FROM_MEMORY = re.compile(
     r"arXiv:\s*\d|https?://|www\.|\b\d{4}\.\d{4,5}\b", re.IGNORECASE
@@ -108,6 +111,16 @@ def code_check(sentence: Sentence, claims: dict[str, Claim]) -> SentenceCheck | 
         return fail(
             "bad_citation", "it writes an id or link itself; cite claim labels only"
         )
+    # A result number must come from the evidence. The judge eval caught the
+    # judge passing 98.0% against a passage that says 98.2%.
+    missing = missing_numbers(
+        LABEL_GROUP.sub("", sentence.text),
+        [claims[label].passage for label in sentence.labels],
+    )
+    if missing:
+        return fail(
+            "unsupported", f"{', '.join(missing)} isn't in the passages it cites"
+        )
     return None
 
 
@@ -124,18 +137,25 @@ def render(sentence: str, claims: dict[str, Claim]) -> str:
     return CITATION_RUN.sub(cite, sentence)
 
 
-def finalize(state: ReviewState) -> ReviewState:
+def finalize(state: ReviewState, guard: OutputGuard | None = None) -> ReviewState:
     # The review keeps only sentences the Critic accepted: after the last
     # allowed rewrite, a rejected sentence is removed rather than shipped.
+    # Then the output guard (layer 4) checks each one as it will be shown: a
+    # sentence that fails is blocked, never shipped.
     claims = {claim.label: claim for claim in state["claims"]}
     papers = {paper.arxiv_id: paper for paper in state["kept"]}
     paragraphs: dict[int, list[str]] = {}
     evidence, removed, cited = [], [], []
+    blocked: list[Blocked] = []
     for check in state["critique"].checks:
         if check.verdict not in PASSING:
             removed.append(check.sentence)
             continue
         text = render(check.sentence, claims)
+        violations = guard.check(text, allowed_ids=set(papers)) if guard else []
+        if violations:
+            blocked.append(Blocked(sentence=text, violations=violations))
+            continue
         paragraphs.setdefault(check.paragraph, []).append(text)
         used = [claims[label] for label in check.labels]
         evidence.append(Evidence(sentence=text, claims=used))
@@ -147,6 +167,7 @@ def finalize(state: ReviewState) -> ReviewState:
         "references": [papers[arxiv_id] for arxiv_id in cited],
         "evidence": evidence,
         "removed": removed,
+        "blocked": blocked,
     }
 
 

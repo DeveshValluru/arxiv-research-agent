@@ -79,7 +79,7 @@ class HostedEmbedder:
         self.dimension = dimension
         self._query_prefix = query_prefix
         self._batch_size = batch_size
-        self._client = client or InferenceClient(provider=provider)
+        self._client = client or InferenceClient(provider=provider, timeout=60)
 
     def _embed(self, texts: list[str]) -> np.ndarray:
         batches = [

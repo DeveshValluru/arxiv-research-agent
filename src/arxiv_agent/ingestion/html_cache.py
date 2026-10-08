@@ -12,11 +12,15 @@ from arxiv_agent.clients.arxiv import ArxivClient
 HTML_CACHE_DIR = Path("data/html")
 
 
+def cache_path(arxiv_id: str, version: int, cache_dir: Path = HTML_CACHE_DIR) -> Path:
+    return cache_dir / f"{arxiv_id.replace('/', '_')}v{version}.html"
+
+
 def load_html(
     client: ArxivClient, arxiv_id: str, version: int, cache_dir: Path = HTML_CACHE_DIR
 ) -> str | None:
     # Keyed by version: a bare id means "latest", which changes over time.
-    path = cache_dir / f"{arxiv_id.replace('/', '_')}v{version}.html"
+    path = cache_path(arxiv_id, version, cache_dir)
     if path.exists():
         return path.read_text(encoding="utf-8")
 

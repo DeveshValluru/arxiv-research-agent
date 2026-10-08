@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from arxiv_agent.guardrails.output import OutputGuard
+
 REFUSAL = "The paper doesn't say."
 CITATION = re.compile(r"\[S(\d+)\]")
 THINKING = re.compile(r"<think>.*?</think>", re.DOTALL)
@@ -17,9 +19,12 @@ class CheckedAnswer(BaseModel):
     problems: list[str]
 
 
-def check_answer(raw: str, n_sources: int) -> CheckedAnswer:
+def check_answer(
+    raw: str, n_sources: int, guard: OutputGuard | None = None
+) -> CheckedAnswer:
     # The prompt asks for these rules; this enforces them. A refusal must be the
     # exact sentence (so it can be counted), and an answer must cite real sources.
+    # The output guard adds links and prompt leaks (layer 4).
     text = THINKING.sub("", raw).strip()
 
     if text.replace("’", "'") == REFUSAL:
@@ -32,6 +37,8 @@ def check_answer(raw: str, n_sources: int) -> CheckedAnswer:
         for n in cited
         if not 1 <= n <= n_sources
     ]
+    if guard is not None:
+        problems += [violation.detail for violation in guard.check(text)]
 
     return CheckedAnswer(
         text=text,
