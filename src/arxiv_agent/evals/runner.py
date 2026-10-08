@@ -53,7 +53,8 @@ class ItemScore(BaseModel):
     evidence_hit: bool | None = None
     cost_usd: float | None = None
     latency_ms: float | None = None
-    removed_sentences: int = 0  # taken out by the claim-support check
+    flagged_sentences: int = 0  # failed by the claim-support check
+    repaired: bool = False  # the rewrite of the failing sentences was used
     support_refused: bool = False  # the check left nothing, so the answer refused
     trace_id: str | None = None
     error: str | None = None
@@ -91,7 +92,7 @@ def score_item(
     item: EvalItem, result: QAResult, chunks: list[Chunk], judge: Judge
 ) -> ItemScore:
     status, answer = result.answer.status, result.answer.text
-    removed = sum(s.verdict in FAILING for s in result.support)
+    flagged = sum(s.verdict in FAILING for s in result.support)
     score = graded_by = reasoning = error = None
     try:
         score, graded_by, reasoning = grade(item, status, answer, judge)
@@ -115,8 +116,9 @@ def score_item(
         ),
         cost_usd=result.cost_usd,
         latency_ms=result.retrieval_ms + result.generation_ms + result.support_ms,
-        removed_sentences=removed,
-        support_refused=status == "refused" and removed > 0,
+        flagged_sentences=flagged,
+        repaired=result.repair is not None and result.repair.outcome == "repaired",
+        support_refused=status == "refused" and flagged > 0,
         trace_id=result.trace_id,
         error=error,
     )
@@ -160,7 +162,8 @@ def summarize(scores: list[ItemScore]) -> dict:
         ),
         "token_f1": _mean(s.f1 for s in answerable),
         "invalid_rate": _mean(s.status == "invalid" for s in answered),
-        "support_removed_rate": _mean(s.removed_sentences > 0 for s in answered),
+        "support_flagged_rate": _mean(s.flagged_sentences > 0 for s in answered),
+        "support_repaired": sum(s.repaired for s in answered),
         "support_refusals": sum(s.support_refused for s in answered),
         "cost_usd": sum(s.cost_usd or 0.0 for s in answered),
         "latency_ms_p50": _percentile(latencies, 0.5),

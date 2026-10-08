@@ -1,12 +1,20 @@
 from arxiv_agent.qa.answerer import Answerer
 from arxiv_agent.qa.checker import REFUSAL, check_answer
 from arxiv_agent.qa.support import SentenceSupport, SupportChecker, apply_support
-from tests.test_answerer import HITS, FakeLangfuse, FakeLLM, FakeRetriever
+from tests.test_answerer import (
+    HITS,
+    FakeHTTPError,
+    FakeLangfuse,
+    FakeLLM,
+    FakeRetriever,
+)
 
 # HITS: [S1] "Swapping the order reduces the bias by $\Delta b$."
 #       [S2] "Judges prefer the first answer shown. ..."
 TRUE = "Swapping the order reduces the bias [S1]."
 OVERSTATED = "All judges always prefer the first answer [S2]."
+FIXED = "Judges often prefer the first answer shown [S2]."
+FIRST = f"{TRUE} {OVERSTATED}"  # the answer before the check
 
 
 def verdict_by_sentence(messages):
@@ -17,15 +25,16 @@ def verdict_by_sentence(messages):
     return '{"verdict": "supported", "reason": "The source says so."}'
 
 
-class FakeJudge(FakeLLM):
+class FakeJudge:
+    # Called from the checker's threads, so each reply stays local to its call.
     def __init__(self, reply=verdict_by_sentence) -> None:
-        super().__init__("")
         self.reply = reply
+        self.calls: list[dict] = []
 
     def chat_completion(self, messages, model=None, max_tokens=None):
         self.calls.append({"messages": messages, "model": model})
-        self.outcomes = [self.reply(messages) if callable(self.reply) else self.reply]
-        return super().chat_completion(messages, model, max_tokens)
+        reply = self.reply(messages) if callable(self.reply) else self.reply
+        return FakeLLM(reply).chat_completion(messages, model, max_tokens)
 
 
 def checker(judge: FakeJudge) -> SupportChecker:
@@ -92,20 +101,29 @@ def test_nothing_supported_left_means_the_answer_refuses():
     assert (checked.text, checked.status) == (REFUSAL, "refused")
 
 
-def test_the_answerer_runs_the_check_and_records_it():
-    langfuse = FakeLangfuse()
-    answerer = Answerer(
+def answerer(
+    llm: FakeLLM, judge: FakeJudge | None = None, langfuse=None, repair=True
+) -> Answerer:
+    return Answerer(
         FakeRetriever(HITS),
         model="test/fake-llm",
         providers=["a"],
-        clients={"a": FakeLLM(f"{TRUE} {OVERSTATED}")},
-        langfuse=langfuse,
-        support=checker(FakeJudge()),
+        clients={"a": llm},
+        langfuse=langfuse or FakeLangfuse(),
+        sleep=lambda seconds: None,
+        support=checker(judge or FakeJudge()),
+        repair=repair,
     )
 
-    result = answerer.ask("Why swap?", "2499.00001", 1)
 
-    assert result.answer.text == TRUE
+def test_the_answerer_runs_the_check_and_records_it():
+    langfuse = FakeLangfuse()
+
+    result = answerer(FakeLLM(FIRST), langfuse=langfuse, repair=False).ask(
+        "Why swap?", "2499.00001", 1
+    )
+
+    assert (result.answer.text, result.repair) == (TRUE, None)
     assert verdicts(result.support) == ["supported", "overstated"]
     assert result.support_ms > 0
     [span] = langfuse.named("support-check")
@@ -114,15 +132,64 @@ def test_the_answerer_runs_the_check_and_records_it():
 
 def test_a_refusal_is_not_checked():
     judge = FakeJudge()
-    answerer = Answerer(
-        FakeRetriever(HITS),
-        model="test/fake-llm",
-        providers=["a"],
-        clients={"a": FakeLLM(REFUSAL)},
-        langfuse=FakeLangfuse(),
-        support=checker(judge),
-    )
 
-    result = answerer.ask("What about cost?", "2499.00001", 1)
+    result = answerer(FakeLLM(REFUSAL), judge).ask("What about cost?", "2499.00001", 1)
 
     assert (result.answer.status, result.support, judge.calls) == ("refused", [], [])
+
+
+def test_a_failing_sentence_is_rewritten_once_and_only_the_rewrite_is_judged_again():
+    judge, llm = FakeJudge(), FakeLLM(FIRST, f"{TRUE} {FIXED}")
+
+    result = answerer(llm, judge).ask("Why swap?", "2499.00001", 1)
+
+    assert (result.answer.text, result.answer.cited) == (f"{TRUE} {FIXED}", [1, 2])
+    assert result.repair.outcome == "repaired"
+    assert verdicts(result.repair.support) == ["supported", "supported"]
+    assert result.answer.problems == [
+        f"repaired (overstated: The source tested one setting.): {OVERSTATED}"
+    ]
+    # The repair turn: the first answer, then which sentence failed and why.
+    *_, said, asked = llm.calls[1]["messages"]
+    assert said == {"role": "assistant", "content": FIRST}
+    assert OVERSTATED in asked["content"]
+    assert "The source tested one setting." in asked["content"]
+    assert len(judge.calls) == 3  # 2 sentences, then only the new one
+
+
+def test_what_still_fails_after_the_rewrite_is_removed():
+    # Rewritten word for word: the known verdict stands, no new judge call.
+    judge = FakeJudge()
+
+    result = answerer(FakeLLM(FIRST), judge).ask("Why swap?", "2499.00001", 1)
+
+    assert (result.answer.text, result.repair.outcome) == (TRUE, "repaired")
+    assert len(judge.calls) == 2
+
+
+def test_a_wrong_number_added_by_the_rewrite_is_caught():
+    rewrite = f"{TRUE} Judges prefer the first answer in 80% of cases [S2]."
+
+    result = answerer(FakeLLM(FIRST, rewrite)).ask("Why swap?", "2499.00001", 1)
+
+    assert result.answer.text == TRUE
+    assert result.repair.support[1].reason == "80 isn't in the sources it cites"
+
+
+def test_an_unusable_rewrite_falls_back_to_removing_the_failing_sentences():
+    result = answerer(FakeLLM(FIRST, REFUSAL)).ask("Why swap?", "2499.00001", 1)
+
+    assert result.answer.text == TRUE  # not the refusal
+    assert (result.repair.outcome, result.repair.reason) == (
+        "fallback",
+        "rewrite unusable: refused",
+    )
+
+
+def test_no_provider_for_the_rewrite_falls_back_too():
+    llm = FakeLLM(FIRST, FakeHTTPError(503))
+
+    result = answerer(llm).ask("Why swap?", "2499.00001", 1)
+
+    assert (result.answer.text, result.repair.outcome) == (TRUE, "fallback")
+    assert result.repair.reason.startswith("no provider")

@@ -5,19 +5,17 @@ checks. Same checks here, measured in 6.3: result numbers in code first, then
 the judge (a different model family from the answerer) with the Critic's
 prompt, one call per sentence, in parallel.
 
-A sentence that fails is removed. There's no rewrite loop: an answer is a few
-sentences, and if nothing supported is left, "The paper doesn't say." is the
-honest answer.
-
-Measured on the Q&A eval (6.3b): 64 cited sentences judged, 2 removed. One
-removal was right but cost a correct answer: the sentence was true apart from
-one detail its source didn't contain, and removing it left nothing. A repair
-pass (rewrite the failing sentence once) would keep the true part.
+A sentence that fails is removed; if nothing supported is left, the answer
+refuses. Measured on the Q&A eval (6.3b): 64 cited sentences judged, 2 removed.
+One removal was right but cost a correct answer: the sentence was true apart
+from one detail its source didn't contain, and removing it left nothing. So the
+Answerer first asks for one rewrite of the failing sentences (6.3c, in
+qa/answerer.py) and removes only what still fails.
 """
 
 import contextvars
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
@@ -76,7 +74,15 @@ class SupportChecker:
         self._sleep = sleep
         self._max_workers = max_workers
 
-    def check(self, text: str, hits: list[SearchHit]) -> list[SentenceSupport]:
+    def check(
+        self,
+        text: str,
+        hits: list[SearchHit],
+        known: Iterable[SentenceSupport] = (),
+    ) -> list[SentenceSupport]:
+        # known: verdicts from an earlier check against the same sources. A
+        # rewrite keeps most sentences word for word; only new ones are judged.
+        seen = {s.sentence: s for s in known}
         sentences = [
             s for paragraph in text.split("\n") for s in split_sentences(paragraph)
         ]
@@ -84,10 +90,17 @@ class SupportChecker:
         # calls nest under the current trace span.
         with ThreadPoolExecutor(self._max_workers) as pool:
             futures = [
-                pool.submit(contextvars.copy_context().run, self._check_one, s, hits)
+                None
+                if s in seen
+                else pool.submit(
+                    contextvars.copy_context().run, self._check_one, s, hits
+                )
                 for s in sentences
             ]
-            return [future.result() for future in futures]
+            return [
+                seen[s] if future is None else future.result()
+                for s, future in zip(sentences, futures, strict=True)
+            ]
 
     def _check_one(self, sentence: str, hits: list[SearchHit]) -> SentenceSupport:
         sources = list(dict.fromkeys(int(n) for n in CITATION.findall(sentence)))

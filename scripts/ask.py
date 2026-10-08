@@ -42,6 +42,11 @@ def main() -> None:
         action="store_true",
         help="skip checking each sentence against its sources",
     )
+    parser.add_argument(
+        "--no-repair",
+        action="store_true",
+        help="remove failing sentences without asking for a rewrite first",
+    )
     args = parser.parse_args()
 
     match = VERSIONED_ID.match(args.paper)
@@ -62,6 +67,7 @@ def main() -> None:
         k=args.k,
         langfuse=langfuse,
         support=None if args.no_support_check else SupportChecker(langfuse=langfuse),
+        repair=not args.no_repair,
     )
     result = answerer.ask(args.question, arxiv_id, version)
     store.close()
@@ -80,6 +86,9 @@ def main() -> None:
             f"support check: {len(checked) - failed} of {len(checked)} cited "
             f"sentences supported ({result.support_ms:.0f} ms)"
         )
+    if result.repair is not None:
+        why = f": {result.repair.reason}" if result.repair.reason else ""
+        print(f"repair: {result.repair.outcome}{why}")
     print("\nSources:")
     for source in result.sources:
         cited = "*" if int(source.label[1:]) in result.answer.cited else " "
