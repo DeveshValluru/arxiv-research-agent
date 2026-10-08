@@ -6,8 +6,14 @@ from langfuse import Langfuse, get_client, propagate_attributes
 from pydantic import BaseModel, ConfigDict
 
 from arxiv_agent.guardrails.output import OutputGuard
-from arxiv_agent.llm import chat_with_failover
+from arxiv_agent.llm import ANSWER_TIMEOUT, chat_with_failover
 from arxiv_agent.qa.checker import REFUSAL, CheckedAnswer, check_answer
+from arxiv_agent.qa.support import (
+    FAILING,
+    SentenceSupport,
+    SupportChecker,
+    apply_support,
+)
 from arxiv_agent.retrieval.retriever import Retriever
 from arxiv_agent.storage.chunk_store import SearchHit
 
@@ -53,6 +59,8 @@ class QAResult(BaseModel):
     cost_usd: float | None
     retrieval_ms: float
     generation_ms: float
+    support_ms: float = 0.0  # the claim-support check, when it ran
+    support: list[SentenceSupport] = []  # its verdict on each sentence
     prompt_version: int
     retriever: str  # e.g. "hybrid(BAAI/bge-small-en-v1.5+bm25)+rerank(...)"
     chunker_version: int
@@ -93,7 +101,10 @@ class Answerer:
         clients: dict[str, InferenceClient] | None = None,
         langfuse: Langfuse | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        support: SupportChecker | None = None,
     ) -> None:
+        # support: checks each answered sentence against its sources (6.3b);
+        # None skips it (tests, and measuring what it changes).
         if not providers:
             raise ValueError("need at least one provider")
         self._retriever = retriever
@@ -101,10 +112,13 @@ class Answerer:
         self._providers = providers
         self._k = k
         self._max_tokens = max_tokens
-        self._clients = clients or {p: InferenceClient(provider=p) for p in providers}
+        self._clients = clients or {
+            p: InferenceClient(provider=p, timeout=ANSWER_TIMEOUT) for p in providers
+        }
         self._langfuse = langfuse or get_client()
         self._sleep = sleep
         self._guard = OutputGuard([SYSTEM_PROMPT])
+        self._support = support
 
     def ask(self, question: str, arxiv_id: str, version: int) -> QAResult:
         paper = f"{arxiv_id}v{version}"
@@ -142,6 +156,9 @@ class Answerer:
                         ],
                     }
                 )
+            support, support_ms = [], 0.0
+            if self._support is not None and answer.status == "answered":
+                answer, support, support_ms = self._check_support(answer, hits)
 
             # Invalid answers become warnings, so they stand out in the trace list.
             root.update(
@@ -180,11 +197,28 @@ class Answerer:
             cost_usd=getattr(response.usage, "estimated_cost", None),
             retrieval_ms=retrieval_ms,
             generation_ms=generation_ms,
+            support_ms=support_ms,
+            support=support,
             prompt_version=PROMPT_VERSION,
             retriever=self._retriever.name,
             chunker_version=hits[0].chunk.chunker_version,
             trace_id=None if trace_id == NO_TRACE_ID else trace_id,
         )
+
+    def _check_support(
+        self, answer: CheckedAnswer, hits: list[SearchHit]
+    ) -> tuple[CheckedAnswer, list[SentenceSupport], float]:
+        start = time.perf_counter()
+        with self._langfuse.start_as_current_observation(
+            as_type="chain", name="support-check", input=answer.text
+        ) as span:
+            support = self._support.check(answer.text, hits)
+            checked = apply_support(answer, support)
+            span.update(
+                output=[s.model_dump() for s in support],
+                level="WARNING" if any(s.verdict in FAILING for s in support) else None,
+            )
+        return checked, support, 1000 * (time.perf_counter() - start)
 
     def _retrieve(
         self, question: str, arxiv_id: str, version: int

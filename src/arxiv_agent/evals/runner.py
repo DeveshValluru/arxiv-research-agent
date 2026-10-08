@@ -15,6 +15,7 @@ from arxiv_agent.evals.qa_scoring import (
 )
 from arxiv_agent.ingestion.models import Chunk
 from arxiv_agent.qa.answerer import QAResult
+from arxiv_agent.qa.support import FAILING
 
 ItemType = Literal["answerable", "unanswerable", "false_premise"]
 TYPES: tuple[ItemType, ...] = ("answerable", "unanswerable", "false_premise")
@@ -52,6 +53,8 @@ class ItemScore(BaseModel):
     evidence_hit: bool | None = None
     cost_usd: float | None = None
     latency_ms: float | None = None
+    removed_sentences: int = 0  # taken out by the claim-support check
+    support_refused: bool = False  # the check left nothing, so the answer refused
     trace_id: str | None = None
     error: str | None = None
 
@@ -88,6 +91,7 @@ def score_item(
     item: EvalItem, result: QAResult, chunks: list[Chunk], judge: Judge
 ) -> ItemScore:
     status, answer = result.answer.status, result.answer.text
+    removed = sum(s.verdict in FAILING for s in result.support)
     score = graded_by = reasoning = error = None
     try:
         score, graded_by, reasoning = grade(item, status, answer, judge)
@@ -110,7 +114,9 @@ def score_item(
             [source.chunk_id for source in result.sources],
         ),
         cost_usd=result.cost_usd,
-        latency_ms=result.retrieval_ms + result.generation_ms,
+        latency_ms=result.retrieval_ms + result.generation_ms + result.support_ms,
+        removed_sentences=removed,
+        support_refused=status == "refused" and removed > 0,
         trace_id=result.trace_id,
         error=error,
     )
@@ -154,6 +160,8 @@ def summarize(scores: list[ItemScore]) -> dict:
         ),
         "token_f1": _mean(s.f1 for s in answerable),
         "invalid_rate": _mean(s.status == "invalid" for s in answered),
+        "support_removed_rate": _mean(s.removed_sentences > 0 for s in answered),
+        "support_refusals": sum(s.support_refused for s in answered),
         "cost_usd": sum(s.cost_usd or 0.0 for s in answered),
         "latency_ms_p50": _percentile(latencies, 0.5),
         "latency_ms_p95": _percentile(latencies, 0.95),

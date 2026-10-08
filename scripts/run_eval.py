@@ -26,6 +26,7 @@ from arxiv_agent.ingestion.chunker import CHUNKER_VERSION
 from arxiv_agent.ingestion.embedder import BGE_QUERY_PREFIX, DEFAULT_MODEL_ID, Embedder
 from arxiv_agent.llm import LLMUnavailableError
 from arxiv_agent.qa.answerer import PROMPT_VERSION, Answerer
+from arxiv_agent.qa.support import SupportChecker
 from arxiv_agent.retrieval.retriever import build_retriever
 from arxiv_agent.storage.chunk_store import ChunkStore
 
@@ -99,6 +100,10 @@ def print_report(summary: dict, meta: dict, scores: list[ItemScore], langfuse) -
     )
     print(f"Token F1            {fmt(summary['token_f1'])}   (answerable, cross-check)")
     print(f"Invalid answers     {fmt(summary['invalid_rate'])}")
+    print(
+        f"Support check       removed sentences in {fmt(summary['support_removed_rate'])}"
+        f" of answers; {summary['support_refusals']} turned into refusals"
+    )
     print(f"Answer cost         ${summary['cost_usd']:.4f}")
     print(
         f"Latency             p50 {fmt(summary['latency_ms_p50'], '{:.0f}')} ms | "
@@ -130,6 +135,11 @@ def main() -> None:
         "--retriever", choices=["dense", "hybrid", "rerank"], default="rerank"
     )
     parser.add_argument("--limit", type=int, help="only the first N questions")
+    parser.add_argument(
+        "--no-support-check",
+        action="store_true",
+        help="skip the claim-support check (to measure what it changes)",
+    )
     parser.add_argument("--out", type=Path, default=RUNS_DIR)
     args = parser.parse_args()
 
@@ -149,6 +159,7 @@ def main() -> None:
         providers=args.providers.split(","),
         k=args.k,
         langfuse=langfuse,
+        support=None if args.no_support_check else SupportChecker(langfuse=langfuse),
     )
     judge = Judge(langfuse=langfuse)
 
@@ -196,6 +207,7 @@ def main() -> None:
         "prompt_version": PROMPT_VERSION,
         "embedder": DEFAULT_MODEL_ID,
         "retriever": retriever.name,
+        "support_check": not args.no_support_check,
         "chunker_version": CHUNKER_VERSION,
         "judge_model": JUDGE_MODEL,
         "judge_prompt_version": JUDGE_PROMPT_VERSION,

@@ -14,6 +14,7 @@ from arxiv_agent.ingestion.chunker import chunk_paper
 from arxiv_agent.ingestion.html_parser import parse_arxiv_html
 from arxiv_agent.qa.answerer import QAResult, Source
 from arxiv_agent.qa.checker import REFUSAL, CheckedAnswer
+from arxiv_agent.qa.support import SentenceSupport
 
 FIXTURES = Path(__file__).parent / "fixtures"
 EVALS = Path(__file__).parent.parent / "evals"
@@ -233,3 +234,26 @@ def test_both_eval_files_load_into_the_schema():
     items = load_items([EVALS / "qa_qasper.jsonl", EVALS / "qa_survey.jsonl"])
     assert len(items) == 50
     assert len({item.id for item in items}) == 50
+
+
+def test_score_records_what_the_support_check_did():
+    result = make_result(REFUSAL, "refused").model_copy(
+        update={
+            "support_ms": 1500.0,
+            "support": [
+                SentenceSupport(
+                    sentence="All judges agree [S1].",
+                    sources=[1],
+                    verdict="overstated",
+                    reason="One judge was tested.",
+                )
+            ],
+        }
+    )
+
+    score = score_item(make_item("answerable"), result, CHUNKS, FakeJudge())
+
+    assert (score.removed_sentences, score.support_refused) == (1, True)
+    assert score.latency_ms == 40.0 + 1000.0 + 1500.0  # the check counts as latency
+    summary = summarize([score])
+    assert (summary["support_removed_rate"], summary["support_refusals"]) == (1.0, 1)

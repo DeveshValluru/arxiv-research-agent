@@ -15,6 +15,7 @@ from langfuse import get_client
 
 from arxiv_agent.ingestion.embedder import BGE_QUERY_PREFIX, DEFAULT_MODEL_ID, Embedder
 from arxiv_agent.qa.answerer import Answerer
+from arxiv_agent.qa.support import FAILING, SupportChecker
 from arxiv_agent.retrieval.retriever import build_retriever
 from arxiv_agent.storage.chunk_store import ChunkStore
 
@@ -36,6 +37,11 @@ def main() -> None:
         "--retriever", choices=["dense", "hybrid", "rerank"], default="rerank"
     )
     parser.add_argument("--json", action="store_true", help="print the full record")
+    parser.add_argument(
+        "--no-support-check",
+        action="store_true",
+        help="skip checking each sentence against its sources",
+    )
     args = parser.parse_args()
 
     match = VERSIONED_ID.match(args.paper)
@@ -55,6 +61,7 @@ def main() -> None:
         providers=args.providers.split(","),
         k=args.k,
         langfuse=langfuse,
+        support=None if args.no_support_check else SupportChecker(langfuse=langfuse),
     )
     result = answerer.ask(args.question, arxiv_id, version)
     store.close()
@@ -66,6 +73,13 @@ def main() -> None:
 
     print(f"\n{result.answer.text}\n")
     print(f"[{result.answer.status}]", "; ".join(result.answer.problems))
+    checked = [s for s in result.support if s.verdict != "uncited"]
+    if checked:
+        failed = sum(s.verdict in FAILING for s in checked)
+        print(
+            f"support check: {len(checked) - failed} of {len(checked)} cited "
+            f"sentences supported ({result.support_ms:.0f} ms)"
+        )
     print("\nSources:")
     for source in result.sources:
         cited = "*" if int(source.label[1:]) in result.answer.cited else " "

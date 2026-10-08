@@ -12,6 +12,12 @@ from langfuse import Langfuse, get_client
 from pydantic import BaseModel, ValidationError
 
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+# Seconds a single call may take before it counts as failed (and the next
+# provider is tried). Without one, a provider that stops answering blocks
+# forever: the 6.3b eval run hung 18 minutes on one call. Judges answer in
+# ~2 s, answers in ~5 s.
+JUDGE_TIMEOUT = 30
+ANSWER_TIMEOUT = 60
 ATTEMPTS_PER_PROVIDER = 2
 BACKOFF_SECONDS = 2.0
 THINKING = re.compile(r"<think>.*?</think>", re.DOTALL)

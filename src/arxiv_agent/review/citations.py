@@ -23,7 +23,8 @@ from arxiv_agent.review.state import (
 LABEL = re.compile(r"K\d+")
 LABEL_GROUP = re.compile(r"\[(K\d+(?:\s*[,;]\s*K\d+)*)\]")  # [K1] or [K1, K2]
 CITATION_RUN = re.compile(r"(?:\s*\[K\d+(?:\s*[,;]\s*K\d+)*\])+")  # [K1][K2]
-LEADING_CITATIONS = re.compile(r"^(?:\[K\d+(?:\s*[,;]\s*K\d+)*\]\s*)+")
+# [K1] in reviews, [S1] in Q&A answers
+LEADING_CITATIONS = re.compile(r"^(?:\[[KS]\d+(?:\s*[,;]\s*[KS]\d+)*\]\s*)+")
 # An id or link the model wrote itself instead of citing a label.
 FROM_MEMORY = re.compile(
     r"arXiv:\s*\d|https?://|www\.|\b\d{4}\.\d{4,5}\b", re.IGNORECASE
