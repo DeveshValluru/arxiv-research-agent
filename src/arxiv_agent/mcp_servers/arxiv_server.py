@@ -23,6 +23,7 @@ from arxiv_agent.clients.arxiv import (
     ArxivError,
     ArxivUnavailableError,
     PaperSummary,
+    shared_arxiv_client,
 )
 from arxiv_agent.ingestion.html_cache import HTML_CACHE_DIR, load_html
 from arxiv_agent.ingestion.html_parser import parse_arxiv_html
@@ -149,7 +150,7 @@ def create_server(
 ) -> MCPServer:
     # html_cache: share ingestion's page cache, so a paper whose bibliography
     # was read here isn't downloaded again when it's ingested.
-    arxiv = client or ArxivClient()
+    arxiv = client or shared_arxiv_client()
     server = MCPServer(
         "arxiv",
         instructions=(

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import httpx
 
-from arxiv_agent.clients.arxiv import ArxivClient
+from arxiv_agent.clients.arxiv import shared_arxiv_client
 from arxiv_agent.evals.retrieval import match_evidence
 from arxiv_agent.ingestion.chunker import CHUNK_TOKENIZER
 from arxiv_agent.ingestion.embedder import (
@@ -122,7 +122,7 @@ def main() -> None:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
 
     store = ChunkStore.connect(os.environ["DATABASE_URL"])
-    client = ArxivClient()
+    client = shared_arxiv_client()
     embedder = Embedder(DEFAULT_MODEL_ID)
     count_tokens = load_token_counter(CHUNK_TOKENIZER)
 

@@ -94,6 +94,9 @@ def test_describe_event():
     assert describe_event(
         "step", {"step": "stop", "stopped": "ran 73 of 60 seconds"}
     ) == ("stop: ran 73 of 60 seconds")
+    assert describe_event(
+        "step", {"step": "human_review", "kept": 8, "edits": [], "dropped": 44}
+    ) == ("human_review: kept 8, dropped 44")
     assert (
         describe_event(
             "progress",

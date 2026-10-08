@@ -217,3 +217,13 @@ def test_a_database_from_before_the_pause_is_upgraded(connect):
     jobs.init_schema()
 
     assert jobs.get(paused_job(jobs)).status == "awaiting_review"
+
+
+def test_worker_running_sees_the_worker_lock_from_another_connection(connect):
+    key = random.randint(2**32, 2**40)  # a bigint key, split across two columns
+    worker = JobStore(connect())
+    api = JobStore(connect())
+
+    assert api.worker_running(key) is False
+    assert worker.try_lock_worker(key)
+    assert api.worker_running(key) is True

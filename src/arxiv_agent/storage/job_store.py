@@ -187,6 +187,17 @@ class JobStore:
         row = self._conn.execute("SELECT pg_try_advisory_lock(%s) AS ok", (key,))
         return row.fetchone()["ok"]
 
+    def worker_running(self, key: int = WORKER_LOCK) -> bool:
+        # Whether some session holds the worker's lock, i.e. a worker is up.
+        # pg_locks splits a bigint key: high 32 bits in classid, low in objid.
+        row = self._conn.execute(
+            "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' "
+            "AND classid::bigint = %s AND objid::bigint = %s AND objsubid = 1 "
+            "AND granted) AS held",
+            (key >> 32, key & 0xFFFFFFFF),
+        ).fetchone()
+        return row["held"]
+
     def claim_next(self) -> Job | None:
         # FOR UPDATE SKIP LOCKED: two workers can't claim the same job, and
         # neither waits on a row the other is in the middle of claiming.

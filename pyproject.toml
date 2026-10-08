@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "beautifulsoup4>=4.15.0",
+    "fastapi>=0.142.4",
     "feedparser>=6.0.14",
     "httpx>=0.28.1",
     "huggingface-hub>=1.33.0",
@@ -24,7 +25,9 @@ dependencies = [
     "scikit-learn==1.6.1",
     "sentence-transformers>=6.1.0",
     "snowballstemmer>=3.1.1",
+    "sse-starlette>=3.5.0",
     "torch>=2.14.1",
+    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]

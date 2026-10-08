@@ -1,0 +1,12 @@
+# Only pyproject, the lock, src/ and scripts/ go into the image.
+.git
+.github
+.venv
+.env
+data
+web
+tests
+evals
+**/__pycache__
+.pytest_cache
+.ruff_cache
