@@ -21,7 +21,7 @@ from arxiv_agent.evals.repair_eval import RepairCase, break_answer
 from arxiv_agent.evals.runner import load_items
 from arxiv_agent.ingestion.embedder import BGE_QUERY_PREFIX, DEFAULT_MODEL_ID, Embedder
 from arxiv_agent.llm import LLMUnavailableError
-from arxiv_agent.qa.answerer import Answerer
+from arxiv_agent.qa.answerer import Answerer, NotIndexedError
 from arxiv_agent.qa.support import FAILING, SupportChecker
 from arxiv_agent.retrieval.retriever import build_retriever
 from arxiv_agent.storage.chunk_store import ChunkStore
@@ -58,7 +58,7 @@ def main() -> None:
         try:
             with propagate_attributes(session_id="repair-eval-build"):
                 result = answerer.ask(item.question, item.arxiv_id, item.version)
-        except (LLMUnavailableError, LookupError) as exc:
+        except (LLMUnavailableError, NotIndexedError) as exc:
             print(f"[{n:2}/{len(items)}] {item.id[:24]} skipped: {exc}", flush=True)
             continue
         if not result.support:  # refused or invalid: nothing to break

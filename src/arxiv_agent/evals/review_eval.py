@@ -40,6 +40,9 @@ class SurveyCase(BaseModel):
     references: int  # entries in the bibliography
     with_arxiv_id: int
     gold: list[str]  # cited arXiv papers submitted before the cutoff
+    # Papers a reviewer removed (cases from review labels, 7.3): keeping
+    # one is a screener false positive again.
+    exclude: list[str] = []
 
 
 class ReviewScore(BaseModel):
@@ -62,6 +65,7 @@ class ReviewScore(BaseModel):
     support_rate: float | None = None
     removed_sentences: int = 0
     gold_kept: list[str] = []  # which expert-cited papers the review kept
+    excluded_kept: list[str] = []  # papers a reviewer had removed
     llm_calls: int = 0
     tokens: int = 0
     seconds: float = 0.0
@@ -115,6 +119,7 @@ def score_review(
         support_rate=_share(sum(c.verdict == "supported" for c in judged), len(judged)),
         removed_sentences=len(state.get("removed", [])),
         gold_kept=[arxiv_id for arxiv_id in kept if arxiv_id in gold],
+        excluded_kept=[arxiv_id for arxiv_id in kept if arxiv_id in case.exclude],
         llm_calls=spent.llm_calls if spent else 0,
         tokens=spent.tokens if spent else 0,
         seconds=round(seconds, 1),

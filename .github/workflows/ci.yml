@@ -1,0 +1,48 @@
+# Lint and the test suite, on every pull request and every push to main.
+# No secrets and no model calls: the tests use fakes, except the embedder
+# tests, which download bge-small once (cached).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: Lint and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg17
+        env:
+          POSTGRES_USER: arxiv
+          POSTGRES_PASSWORD: arxiv
+          POSTGRES_DB: arxiv
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U arxiv -d arxiv"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      # The tests make a throwaway schema per test in this database.
+      DATABASE_URL: postgresql://arxiv:arxiv@127.0.0.1:5432/arxiv
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.26"
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked
+      - name: Lint
+        run: |
+          uv run ruff format --check .
+          uv run ruff check .
+      - name: Cache Hugging Face models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-tests-${{ hashFiles('src/arxiv_agent/ingestion/embedder.py') }}
+      - name: Tests
+        run: uv run python -m pytest -q -rs

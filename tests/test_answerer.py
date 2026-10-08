@@ -12,6 +12,7 @@ from arxiv_agent.qa.answerer import (
     PROMPT_VERSION,
     SYSTEM_PROMPT,
     Answerer,
+    NotIndexedError,
     build_messages,
     format_sources,
 )
@@ -85,6 +86,7 @@ class FakeObservation:
 class FakeLangfuse:
     def __init__(self) -> None:
         self.observations: list[FakeObservation] = []
+        self.scores: list[dict] = []
 
     @contextmanager
     def start_as_current_observation(self, **kwargs):
@@ -94,6 +96,9 @@ class FakeLangfuse:
 
     def named(self, name: str) -> list[FakeObservation]:
         return [o for o in self.observations if o.kwargs["name"] == name]
+
+    def create_score(self, **kwargs) -> None:
+        self.scores.append(kwargs)
 
 
 def make_answerer(*llms: FakeLLM, hits=HITS, langfuse=None, sleeps=None):
@@ -181,7 +186,7 @@ def test_cut_off_answer_is_invalid_even_if_its_citations_are_fine():
 
 
 def test_unindexed_paper_fails_loudly():
-    with pytest.raises(LookupError, match="ingest it first"):
+    with pytest.raises(NotIndexedError, match="ingest it first"):
         make_answerer(FakeLLM("unused"), hits=[]).ask("Why?", "2499.00001", 1)
 
 

@@ -46,6 +46,13 @@ Rewrite your answer. Keep every other sentence word for word. Fix each sentence 
 NO_TRACE_ID = "0" * 32  # what a disabled Langfuse client reports
 
 
+class NotIndexedError(LookupError):
+    # The paper has no chunks yet. Its own class, so callers that skip such
+    # questions don't also swallow IndexError and KeyError (both LookupErrors)
+    # from real bugs.
+    pass
+
+
 def repair_request(failed: list[SentenceSupport]) -> str:
     flagged = "\n".join(
         f'{n}. "{s.sentence}"\n   Problem: {s.reason}'
@@ -159,6 +166,10 @@ class Answerer:
         self._guard = OutputGuard([SYSTEM_PROMPT])
         self._support = support
         self._repair = repair
+
+    @property
+    def retriever_name(self) -> str:
+        return self._retriever.name
 
     def ask(self, question: str, arxiv_id: str, version: int) -> QAResult:
         paper = f"{arxiv_id}v{version}"
@@ -345,7 +356,7 @@ class Answerer:
             hits = self._retriever.retrieve(question, (arxiv_id, version), self._k)
             retrieval_ms = 1000 * (time.perf_counter() - start)
             if not hits:
-                raise LookupError(
+                raise NotIndexedError(
                     f"{arxiv_id}v{version} has no indexed chunks for "
                     f"{self._retriever.name}; ingest it first"
                 )

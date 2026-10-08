@@ -1,11 +1,15 @@
 import math
 import re
+import threading
 from collections import Counter
 
 import snowballstemmer
 
 WORD = re.compile(r"[a-z0-9]+")
-STEMMER = snowballstemmer.stemmer("english")
+# A Snowball stemmer keeps its working state on the object, so one shared by
+# threads corrupts words: concurrent eval questions (7.2) got IndexErrors and,
+# worse, silently wrong stems. One stemmer per thread.
+_local = threading.local()
 # Function words carry no topic. Question words matter more than usual: papers
 # rarely contain "does" or "which", so BM25 would give them a high IDF.
 STOPWORDS = frozenset(
@@ -79,7 +83,9 @@ STOPWORDS = frozenset(
 
 def tokenize(text: str) -> list[str]:
     words = [word for word in WORD.findall(text.lower()) if word not in STOPWORDS]
-    return STEMMER.stemWords(words)
+    if not hasattr(_local, "stemmer"):
+        _local.stemmer = snowballstemmer.stemmer("english")
+    return _local.stemmer.stemWords(words)
 
 
 class BM25Index:

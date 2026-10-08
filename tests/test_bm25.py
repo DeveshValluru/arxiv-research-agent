@@ -1,3 +1,6 @@
+import random
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from arxiv_agent.retrieval.bm25 import BM25Index, tokenize
@@ -58,3 +61,23 @@ def test_question_made_only_of_stopwords_matches_nothing():
 
 def test_empty_index_is_harmless():
     assert BM25Index([]).top("anything", k=5) == []
+
+
+def test_tokenizing_from_many_threads_gives_the_same_stems():
+    # A shared Snowball stemmer gave IndexErrors and wrong stems here (7.2).
+    rng = random.Random(0)
+    words = [
+        "evaluation",
+        "judges",
+        "probabilities",
+        "normalizing",
+        "relational",
+        "summarizing",
+    ]
+    texts = [" ".join(rng.choices(words, k=100)) for _ in range(200)]
+    expected = [tokenize(text) for text in texts]
+
+    with ThreadPoolExecutor(8) as pool:
+        stems = list(pool.map(tokenize, texts * 3))
+
+    assert stems == expected * 3
