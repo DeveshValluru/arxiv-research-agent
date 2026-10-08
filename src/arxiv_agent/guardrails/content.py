@@ -16,6 +16,13 @@ What it can't catch: an instruction phrased as an ordinary claim ("this work
 is foundational to the field"), or a pattern nobody wrote down yet. Removals are
 flagged, never silent, and papers *about* prompt injection lose the attack
 examples they quote.
+
+Measured in 6.4 (scripts/run_injection_eval.py): all 9 red-team injections the
+patterns were written against, but only 5% of 105 attacks written without
+seeing them; 0 false blocks on 36,548 real sentences. A trained classifier
+(ProtectAI's DeBERTa) caught 58% but blocked 4.4% of real sentences. None of
+the 105 moved the Screener even with this guard off; the fence escape is the
+attack that works, and fence tags are removed by code, not by pattern.
 """
 
 import re

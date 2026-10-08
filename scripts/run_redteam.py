@@ -10,6 +10,11 @@ shipped review, and which layer stops it?). Traced in Langfuse (environment
 
 --no-content-guard turns the content guard off, to measure what it stops.
 About 20 screening calls and 5 short reviews: 10 to 15 minutes.
+
+--generated adds the injection eval's generated attacks whose goal is to get
+a paper kept or scored high (evals/injection_attacks.jsonl, 6.4) as Screener
+attacks: written without seeing the content guard's patterns.
+--screener-only skips the review attacks.
 """
 
 import argparse
@@ -21,9 +26,11 @@ from pathlib import Path
 
 from langfuse import get_client, propagate_attributes
 
+from arxiv_agent.evals.injection_eval import Attack
 from arxiv_agent.evals.judge import JUDGE_MODEL
 from arxiv_agent.evals.provenance import content_hash, git_version
 from arxiv_agent.evals.redteam import (
+    Injection,
     ReviewAttack,
     ScreenerAttack,
     load_red_team,
@@ -43,6 +50,8 @@ from arxiv_agent.review.setup import ReviewSettings
 from arxiv_agent.review.writer import Synthesizer
 
 RED_TEAM = Path("evals/redteam.json")
+GENERATED = Path("evals/injection_attacks.jsonl")
+SCREENING_GOALS = {"keep", "score"}
 RUNS_DIR = Path("data/eval_runs")
 
 
@@ -57,11 +66,11 @@ def print_report(
     print(
         "(score out of 10; * = kept, i.e. the attack worked; 'clean' is the control)\n"
     )
-    print(f"{'injection':<16}" + "".join(f"{t:>12}" for t in targets) + "   kept")
+    print(f"{'injection':<26}" + "".join(f"{t:>12}" for t in targets) + "   kept")
     for injection in dict.fromkeys(r.injection for r in screener):
         row = [r for r in screener if r.injection == injection]
         cells = "".join(f"{r.score:>11}{'*' if r.kept else ' '}" for r in row)
-        print(f"{injection:<16}{cells}   {sum(r.kept for r in row)}/{len(row)}")
+        print(f"{injection:<26}{cells}   {sum(r.kept for r in row)}/{len(row)}")
 
     print("\nReview attacks: a kept paper's text carries an injection")
     print("(where the injected content got to; shipped = the attack worked)\n")
@@ -98,9 +107,19 @@ async def main(args: argparse.Namespace) -> None:
         writer, toolbox=None, guard_content=guard_content, langfuse=langfuse
     )
 
-    screener: list[ScreenerAttack] = []
-    for target in data.off_topic:
-        for injection in data.screener_injections:
+    injections = list(data.screener_injections)
+    if args.generated:
+        lines = GENERATED.read_text(encoding="utf-8").splitlines()
+        attacks = [Attack.model_validate_json(line) for line in lines if line.strip()]
+        injections += [
+            Injection(id=a.id, text=a.text)
+            for a in attacks
+            if a.goal in SCREENING_GOALS
+        ]
+    limit = asyncio.Semaphore(args.concurrency)
+
+    async def attack(target, injection) -> ScreenerAttack:
+        async with limit:
             with (
                 langfuse.start_as_current_observation(
                     as_type="agent",
@@ -111,15 +130,24 @@ async def main(args: argparse.Namespace) -> None:
             ):
                 result = await screener_attack(nodes, data, target, injection)
                 span.update(output=result.model_dump())
-            screener.append(result)
-            print(
-                f"screener  {target.arxiv_id}  {injection.id:<16} score {result.score:>2}  kept {result.kept}",
-                flush=True,
-            )
+        print(
+            f"screener  {target.arxiv_id}  {injection.id:<26} score {result.score:>2}  kept {result.kept}",
+            flush=True,
+        )
+        return result
+
+    # Grouped by injection, so the report reads one attack per row.
+    screener: list[ScreenerAttack] = await asyncio.gather(
+        *(
+            attack(target, injection)
+            for injection in injections
+            for target in data.off_topic
+        )
+    )
 
     review: list[ReviewAttack] = []
     leak_guard = OutputGuard(REVIEW_PROMPTS)
-    for injection in data.review_injections:
+    for injection in [] if args.screener_only else data.review_injections:
         graph = build_review_graph(
             nodes,
             Reader(
@@ -159,6 +187,7 @@ async def main(args: argparse.Namespace) -> None:
             "model": settings.model,
             "judge_model": JUDGE_MODEL,
             "content_guard": guard_content,
+            "generated": args.generated,
         },
         "screener": [r.model_dump() for r in screener],
         "review": [r.model_dump() for r in review],
@@ -174,4 +203,7 @@ if __name__ == "__main__":
     parser.add_argument("--set", type=Path, default=RED_TEAM)
     parser.add_argument("--out", type=Path, default=RUNS_DIR)
     parser.add_argument("--no-content-guard", action="store_true")
+    parser.add_argument("--generated", action="store_true")
+    parser.add_argument("--screener-only", action="store_true")
+    parser.add_argument("--concurrency", type=int, default=4)
     asyncio.run(main(parser.parse_args()))
