@@ -1,4 +1,5 @@
-# Lint and the test suite, on every pull request and every push to main.
+# Lint and the test suite, on every pull request and every push to main;
+# the web UI's lint, types and production build alongside.
 # No secrets and no model calls: the tests use fakes, except the embedder
 # tests, which download bge-small once (cached).
 name: CI
@@ -46,3 +47,28 @@ jobs:
           key: hf-tests-${{ hashFiles('src/arxiv_agent/ingestion/embedder.py') }}
       - name: Tests
         run: uv run python -m pytest -q -rs
+
+  web:
+    name: Web UI (lint, types, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        run: npm ci --no-audit --no-fund
+      - name: Lint
+        run: npm run lint
+      - name: Types
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"

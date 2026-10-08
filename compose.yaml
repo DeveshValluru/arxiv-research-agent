@@ -1,7 +1,12 @@
-# Local Postgres with pgvector: the chunk index (vectors + full-text search).
-#   start:  docker compose up -d
-#   stop:   docker compose down        (data survives in the pgdata volume)
-#   wipe:   docker compose down -v     (deletes the index; re-run the ingest script)
+# Local Postgres with pgvector: the chunk index (vectors + full-text search),
+# review jobs, the reading list. And, behind the "app" profile, the whole
+# demo: the API, the review worker and the web UI.
+#
+#   database only (development): docker compose up -d
+#   the whole demo:              docker compose --profile app up -d --build
+#                                then open http://localhost:3000
+#   stop:   docker compose --profile app down   (data survives in volumes)
+#   wipe:   docker compose down -v              (deletes the index; re-ingest)
 services:
   db:
     image: pgvector/pgvector:0.8.7-pg17
@@ -20,5 +25,58 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # The API and the worker share one image (Dockerfile) and one setup: .env
+  # for the model and tracing keys, the database by its service name, models
+  # downloaded once into a volume, arXiv pages shared with the host's cache.
+  api: &python
+    profiles: [app]
+    build: .
+    image: arxiv-agent:local
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://arxiv:${POSTGRES_PASSWORD}@db:5432/arxiv
+      WEB_ORIGIN: http://localhost:3000
+    volumes:
+      - hf_cache:/cache/huggingface
+      - ./data/html:/app/data/html
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      # The first start downloads the embedder and reranker (~200 MB).
+      start_period: 180s
+
+  worker:
+    <<: *python
+    command: ["python", "scripts/review_worker.py"]
+    ports: []
+    healthcheck:
+      disable: true
+
+  web:
+    profiles: [app]
+    build:
+      context: ./web
+      args:
+        # Where the browser finds the API (it runs on your machine).
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    image: arxiv-agent-web:local
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+
 volumes:
   pgdata:
+  hf_cache:
