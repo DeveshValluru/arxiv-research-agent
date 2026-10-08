@@ -106,6 +106,8 @@ def describe_event(kind: str, data: dict) -> str:
         )
     parts = []
     for key, value in data.items():
+        if isinstance(value, list) and not value:
+            continue  # "edits " with nothing after it reads like a glitch
         text = "; ".join(map(_short, value)) if isinstance(value, list) else str(value)
         if key == "stopped":  # already a sentence: "used 6 of 2 LLM calls"
             parts.append(text)
