@@ -10,6 +10,7 @@ import re
 from pydantic import BaseModel, ConfigDict
 
 from arxiv_agent.guardrails.output import Blocked, OutputGuard
+from arxiv_agent.review.numbers import missing_numbers
 from arxiv_agent.review.state import (
     PASSING,
     Claim,
@@ -108,6 +109,16 @@ def code_check(sentence: Sentence, claims: dict[str, Claim]) -> SentenceCheck | 
     if FROM_MEMORY.search(LABEL_GROUP.sub("", sentence.text)):
         return fail(
             "bad_citation", "it writes an id or link itself; cite claim labels only"
+        )
+    # A result number must come from the evidence. The judge eval caught the
+    # judge passing 98.0% against a passage that says 98.2%.
+    missing = missing_numbers(
+        LABEL_GROUP.sub("", sentence.text),
+        [claims[label].passage for label in sentence.labels],
+    )
+    if missing:
+        return fail(
+            "unsupported", f"{', '.join(missing)} isn't in the passages it cites"
         )
     return None
 
