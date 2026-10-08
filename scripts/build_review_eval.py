@@ -16,7 +16,7 @@ itself moves the score.
 import logging
 from pathlib import Path
 
-from arxiv_agent.clients.arxiv import ArxivClient
+from arxiv_agent.clients.arxiv import ArxivClient, shared_arxiv_client
 from arxiv_agent.evals.review_eval import SurveyCase
 from arxiv_agent.ingestion.html_cache import load_html
 from arxiv_agent.ingestion.html_parser import parse_arxiv_html
@@ -78,7 +78,7 @@ def build_case(
 
 def main() -> None:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
-    client = ArxivClient()
+    client = shared_arxiv_client()
     lines = []
     for case_id, survey_id, question in SURVEYS:
         case = build_case(client, case_id, survey_id, question)

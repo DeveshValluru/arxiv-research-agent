@@ -25,6 +25,9 @@ SERVERS = {
 # Stdio servers get a minimal environment; pass only the contact details
 # (arXiv's User-Agent, OpenAlex's polite pool), never other secrets.
 PASS_THROUGH = ("ARXIV_CONTACT_NAME", "ARXIV_CONTACT_EMAIL")
+# The one exception: the arXiv server takes turns with every other arXiv
+# client through the database (clients/pacing.py), so it gets DATABASE_URL.
+SERVER_ENV = {"arxiv": ("DATABASE_URL",)}
 # What a tool call can fail with besides a tool error: a protocol error, a
 # server that died (closed or broken stream), a timeout, or a broken pipe.
 CALL_FAILURES = (
@@ -36,12 +39,13 @@ CALL_FAILURES = (
 )
 
 
-def stdio_server(module: str) -> StdioServerParameters:
+def stdio_server(module: str, extra: tuple[str, ...] = ()) -> StdioServerParameters:
+    names = (*PASS_THROUGH, *extra)
     return StdioServerParameters(
         command=sys.executable,
         args=["-m", module],
         env=get_default_environment()
-        | {name: os.environ[name] for name in PASS_THROUGH if name in os.environ},
+        | {name: os.environ[name] for name in names if name in os.environ},
     )
 
 
@@ -67,7 +71,8 @@ class McpToolbox:
         self, servers: dict[str, Any] | None = None, langfuse: Langfuse | None = None
     ) -> None:
         self._servers = servers or {
-            name: stdio_server(module) for name, module in SERVERS.items()
+            name: stdio_server(module, SERVER_ENV.get(name, ()))
+            for name, module in SERVERS.items()
         }
         self._langfuse = langfuse or get_client()
         self._stack = AsyncExitStack()

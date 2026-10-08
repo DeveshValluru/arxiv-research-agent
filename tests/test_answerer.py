@@ -36,6 +36,9 @@ class FakeRetriever:
         self.hits = hits
         self.calls: list[tuple] = []
 
+    def forget(self, paper):
+        pass
+
     def retrieve(self, question, paper, k):
         self.calls.append((question, paper, k))
         return self.hits

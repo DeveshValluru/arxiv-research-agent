@@ -47,8 +47,7 @@ class FakeReranker:
         return [(chunk, float(-i)) for i, chunk in enumerate(ranked)][:top_k]
 
 
-@pytest.fixture
-def indexed(store):
+def index(store):
     store.save_paper(
         PaperSummary(
             arxiv_id=PAPER[0],
@@ -66,6 +65,11 @@ def indexed(store):
     store.ensure_vector_table(FakeEmbedder.model_id, 3)
     store.save_vectors(FakeEmbedder.model_id, [c.chunk_id for c in CHUNKS], VECTORS)
     return store
+
+
+@pytest.fixture
+def indexed(store):
+    return index(store)
 
 
 def ids(hits) -> list[str]:
@@ -133,3 +137,28 @@ def test_build_retriever(indexed, monkeypatch):
     assert build_retriever("rerank", indexed, embedder).name.endswith(
         "+rerank(test/fake-reranker)"
     )
+
+
+def test_a_paper_asked_about_before_it_was_indexed_works_once_it_is(store):
+    # The API lets you ask, see "ingest it first", ingest, and ask again.
+    store.ensure_vector_table(FakeEmbedder.model_id, 3)  # other papers' vectors
+    retriever = HybridRetriever(store, FakeEmbedder())
+    assert retriever.retrieve("swapping order", PAPER, k=2) == []
+
+    index(store)
+
+    assert ids(retriever.retrieve("swapping order", PAPER, k=2)) == [
+        CHUNKS[4].chunk_id,
+        CHUNKS[2].chunk_id,
+    ]
+
+
+def test_forget_drops_a_papers_cached_index(indexed):
+    # After a re-ingest (new chunks, new ids) the cached index is stale.
+    retriever = HybridRetriever(indexed, FakeEmbedder())
+    retriever.retrieve("swapping", PAPER, k=1)
+
+    retriever.forget(PAPER)
+    DenseRetriever(indexed, FakeEmbedder()).forget(PAPER)  # nothing to forget
+
+    assert PAPER not in retriever._papers

@@ -73,6 +73,9 @@ class Library:
             # page we can't parse or embed (ValueError from both).
             logger.warning("couldn't ingest %sv%d: %s", arxiv_id, version, exc)
             return "unavailable"
+        if report.chunks_written:
+            # New chunks, new ids: whatever the retriever cached is stale.
+            self._retriever.forget((arxiv_id, version))
         return "full_text" if report.status == "ingested" else "abstract_only"
 
     def _lookup(self, arxiv_id: str, version: int) -> PaperSummary | None:

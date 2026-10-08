@@ -9,6 +9,8 @@ import feedparser
 import httpx
 from pydantic import BaseModel, ConfigDict
 
+from arxiv_agent.clients.pacing import LocalPacer, Pacer, SharedPacer
+
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 ARXIV_HTML_BASE = "https://arxiv.org/html/"
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
@@ -118,7 +120,11 @@ class ArxivClient:
         max_attempts: int = 4,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
+        pacer: Pacer | None = None,
     ) -> None:
+        # pacer: how this client takes turns with arXiv. By default it paces
+        # itself; shared_arxiv_client() takes turns with every process on the
+        # same database (clients/pacing.py).
         self._http = http or httpx.Client(
             headers={"User-Agent": USER_AGENT},
             timeout=httpx.Timeout(10.0, read=60.0),
@@ -126,8 +132,7 @@ class ArxivClient:
         )
         self._max_attempts = max_attempts
         self._sleep = sleep
-        self._clock = clock
-        self._last_request_at: float | None = None
+        self._pacer = pacer or LocalPacer(sleep=sleep, clock=clock)
 
     def search_papers(self, query: str, max_results: int = 5) -> list[PaperSummary]:
         xml = self._request(
@@ -158,20 +163,15 @@ class ArxivClient:
         except ArxivNotFoundError:
             return None
 
-    def _pace(self) -> None:
-        if self._last_request_at is not None:
-            elapsed = self._clock() - self._last_request_at
-            if elapsed < MIN_REQUEST_INTERVAL_SECONDS:
-                self._sleep(MIN_REQUEST_INTERVAL_SECONDS - elapsed)
-        self._last_request_at = self._clock()
-
     def _request(self, url: str, params: dict[str, str | int] | None = None) -> str:
         problem = ""
         for attempt in range(1, self._max_attempts + 1):
             wait = BACKOFF_BASE_SECONDS * 2 ** (attempt - 1)
-            self._pace()
             try:
-                response = self._http.get(url, params=params)
+                # The turn covers the request only: backoff waits happen
+                # outside it, so other clients aren't held up meanwhile.
+                with self._pacer.turn():
+                    response = self._http.get(url, params=params)
             except httpx.TransportError as exc:
                 problem = f"network error ({type(exc).__name__})"
             else:
@@ -199,6 +199,14 @@ class ArxivClient:
         raise ArxivUnavailableError(
             f"arXiv unavailable after {self._max_attempts} attempts: {problem}"
         )
+
+
+def shared_arxiv_client() -> ArxivClient:
+    # How production code makes a client: with a database, take turns with
+    # every other process on it (the API, the review worker, its arXiv MCP
+    # server); without one, pace this process alone.
+    url = os.environ.get("DATABASE_URL")
+    return ArxivClient(pacer=SharedPacer.connect(url) if url else None)
 
 
 if __name__ == "__main__":

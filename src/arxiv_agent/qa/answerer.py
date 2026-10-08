@@ -171,7 +171,17 @@ class Answerer:
     def retriever_name(self) -> str:
         return self._retriever.name
 
-    def ask(self, question: str, arxiv_id: str, version: int) -> QAResult:
+    def ask(
+        self,
+        question: str,
+        arxiv_id: str,
+        version: int,
+        on_event: Callable[[str, dict], None] | None = None,
+    ) -> QAResult:
+        # on_event(kind, data) after each step (the API streams them): the
+        # sources found, the answer written, its sentences checked. The
+        # answer text only comes with the result: a repair can change it.
+        emit = on_event or (lambda kind, data: None)
         paper = f"{arxiv_id}v{version}"
         with (
             self._langfuse.start_as_current_observation(
@@ -189,6 +199,18 @@ class Answerer:
             ),
         ):
             hits, retrieval_ms = self._retrieve(question, arxiv_id, version)
+            emit(
+                "retrieved",
+                {
+                    "sources": [
+                        {
+                            "label": f"S{i}",
+                            "section": " > ".join(hit.chunk.section_path),
+                        }
+                        for i, hit in enumerate(hits, start=1)
+                    ]
+                },
+            )
             response, provider, attempts, generation_ms = self._generate(
                 build_messages(question, hits)
             )
@@ -207,10 +229,19 @@ class Answerer:
                         ],
                     }
                 )
+            emit("answered", {"status": answer.status})
             support, repair, support_ms = [], None, 0.0
             if self._support is not None and answer.status == "answered":
                 answer, support, repair, support_ms = self._check_support(
                     question, hits, answer
+                )
+                emit(
+                    "checked",
+                    {
+                        "cited": sum(s.verdict != "uncited" for s in support),
+                        "failed": sum(s.verdict in FAILING for s in support),
+                        "repair": repair.outcome if repair else None,
+                    },
                 )
 
             # Invalid answers become warnings, so they stand out in the trace list.

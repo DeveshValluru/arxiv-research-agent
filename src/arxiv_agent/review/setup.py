@@ -13,7 +13,7 @@ from langfuse import Langfuse
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import BaseModel, ConfigDict
 
-from arxiv_agent.clients.arxiv import ArxivClient
+from arxiv_agent.clients.arxiv import shared_arxiv_client
 from arxiv_agent.evals.judge import JUDGE_MODEL
 from arxiv_agent.ingestion.chunker import CHUNK_TOKENIZER
 from arxiv_agent.ingestion.embedder import (
@@ -60,7 +60,7 @@ async def open_review_graph(
         embedder = Embedder(DEFAULT_MODEL_ID, query_prefix=BGE_QUERY_PREFIX)
         library = Library(
             store,
-            ArxivClient(),
+            shared_arxiv_client(),
             embedder,
             build_retriever("rerank", store, embedder),
             load_token_counter(CHUNK_TOKENIZER),

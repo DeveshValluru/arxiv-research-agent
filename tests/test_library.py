@@ -57,10 +57,14 @@ class LastChunks:
 
     def __init__(self, store) -> None:
         self.store = store
+        self.forgotten: list[tuple[str, int]] = []
 
     def retrieve(self, question, paper, k):
         chunks = self.store.get_chunks(*paper)
         return [SearchHit(chunk=chunk, score=1.0) for chunk in chunks[::-1][:k]]
+
+    def forget(self, paper):
+        self.forgotten.append(paper)
 
 
 def make_library(store, client, cache_dir) -> Library:
@@ -148,3 +152,15 @@ def test_a_page_that_cant_be_parsed_makes_the_paper_unavailable_not_an_error(
 ):
     library = make_library(store, FakeClient(html="<html>not a paper</html>"), tmp_path)
     assert library.ensure_ingested("2499.00001", 1) == "unavailable"
+
+
+def test_the_retriever_forgets_a_paper_only_when_its_chunks_changed(store, tmp_path):
+    retriever = LastChunks(store)
+    library = Library(
+        store, FakeClient(), FakeEmbedder(), retriever, _approx_tokens, tmp_path
+    )
+
+    library.ensure_ingested("2499.00001", 1)
+    library.ensure_ingested("2499.00001", 1)  # nothing new written
+
+    assert retriever.forgotten == [("2499.00001", 1)]

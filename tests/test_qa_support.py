@@ -193,3 +193,16 @@ def test_no_provider_for_the_rewrite_falls_back_too():
 
     assert (result.answer.text, result.repair.outcome) == (TRUE, "fallback")
     assert result.repair.reason.startswith("no provider")
+
+
+def test_ask_reports_each_step_as_it_happens():
+    events = []
+    llm = FakeLLM(FIRST, f"{TRUE} {FIXED}")
+
+    answerer(llm).ask(
+        "Why swap?", "2499.00001", 1, on_event=lambda k, d: events.append((k, d))
+    )
+
+    assert [kind for kind, _ in events] == ["retrieved", "answered", "checked"]
+    assert events[0][1]["sources"][0]["label"] == "S1"
+    assert events[2][1] == {"cited": 2, "failed": 1, "repair": "repaired"}

@@ -21,12 +21,17 @@ class Retriever(Protocol):
         self, question: str, paper: tuple[str, int], k: int
     ) -> list[SearchHit]: ...
 
+    def forget(self, paper: tuple[str, int]) -> None: ...  # after a (re)ingest
+
 
 class DenseRetriever:
     def __init__(self, store: ChunkStore, embedder: Embedder | HostedEmbedder) -> None:
         self._store = store
         self._embedder = embedder
         self.name = f"dense({embedder.model_id})"
+
+    def forget(self, paper: tuple[str, int]) -> None:
+        pass  # nothing cached: every search reads the database
 
     def retrieve(
         self, question: str, paper: tuple[str, int], k: int
@@ -60,16 +65,23 @@ class HybridRetriever:
         )
 
     def _paper(self, paper: tuple[str, int]) -> tuple[dict[str, Chunk], BM25Index]:
-        # Built once per paper and kept for this retriever's lifetime. A paper
-        # re-ingested meanwhile needs a new retriever (fine for scripts; the
-        # API will need invalidation).
-        if paper not in self._papers:
-            chunks = self._store.get_chunks(*paper)
-            self._papers[paper] = (
-                {chunk.chunk_id: chunk for chunk in chunks},
-                BM25Index([chunk.text for chunk in chunks]),
-            )
-        return self._papers[paper]
+        # Built once per paper and kept until forget(). A paper with no chunks
+        # isn't kept: it may be ingested next, and dense search would then
+        # return chunks this index has never seen.
+        if paper in self._papers:
+            return self._papers[paper]
+        chunks = self._store.get_chunks(*paper)
+        built = (
+            {chunk.chunk_id: chunk for chunk in chunks},
+            BM25Index([chunk.text for chunk in chunks]),
+        )
+        if chunks:
+            self._papers[paper] = built
+        return built
+
+    def forget(self, paper: tuple[str, int]) -> None:
+        # Called after a paper is (re)ingested: its chunks and ids changed.
+        self._papers.pop(paper, None)
 
     def retrieve(
         self, question: str, paper: tuple[str, int], k: int

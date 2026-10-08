@@ -14,7 +14,7 @@ import logging
 import os
 import re
 
-from arxiv_agent.clients.arxiv import ArxivClient, PaperSummary
+from arxiv_agent.clients.arxiv import ArxivClient, PaperSummary, shared_arxiv_client
 from arxiv_agent.evals.qa_run import eval_sets
 from arxiv_agent.evals.runner import load_items
 from arxiv_agent.ingestion.chunker import CHUNK_TOKENIZER
@@ -81,7 +81,7 @@ def main() -> None:
         parser.error("give arXiv ids, --from-evals, or both")
 
     store = ChunkStore.connect(os.environ["DATABASE_URL"])
-    client = ArxivClient()
+    client = shared_arxiv_client()
     papers = resolve_papers(ids, store, client)
     if not papers:
         return
