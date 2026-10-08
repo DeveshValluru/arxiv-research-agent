@@ -242,13 +242,17 @@ async def run_review(
                 "verdict": critique.verdict if critique else None,
                 "removed": len(state.get("removed", [])),
                 "blocked": [b.model_dump() for b in state.get("blocked", [])],
+                "flagged": len(state.get("content_flags", [])),
                 "stopped": state.get("stopped"),
                 "spent": state["spent"].model_dump() if "spent" in state else None,
                 "review": state.get("review"),
             },
             # Guard firings are flywheel signals: easy to find as warnings.
             level="WARNING"
-            if state.get("removed") or state.get("stopped") or state.get("blocked")
+            if state.get("removed")
+            or state.get("stopped")
+            or state.get("blocked")
+            or state.get("content_flags")
             else None,
         )
         trace_id = root.trace_id

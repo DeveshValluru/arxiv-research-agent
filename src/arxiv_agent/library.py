@@ -14,7 +14,8 @@ from pydantic import BaseModel, ConfigDict
 
 from arxiv_agent.clients.arxiv import ArxivClient, ArxivError, PaperSummary
 from arxiv_agent.ingestion.embedder import Embedder
-from arxiv_agent.ingestion.html_cache import HTML_CACHE_DIR
+from arxiv_agent.ingestion.html_cache import HTML_CACHE_DIR, cache_path
+from arxiv_agent.ingestion.html_parser import parse_arxiv_html
 from arxiv_agent.ingestion.pipeline import ingest_paper
 from arxiv_agent.retrieval.retriever import Retriever
 from arxiv_agent.storage.chunk_store import ChunkStore
@@ -81,6 +82,17 @@ class Library:
         # arXiv describes the latest version; titles and authors rarely change
         # between versions, so that stands in for the version requested.
         return paper.model_copy(update={"version": version})
+
+    def hidden_text(self, arxiv_id: str, version: int) -> list[str]:
+        # Text the page hid (white, tiny, off-page): removed when the page is
+        # parsed, reported here. Reads the cached page; never downloads.
+        path = cache_path(arxiv_id, version, self._cache_dir)
+        if not path.exists():
+            return []
+        try:
+            return parse_arxiv_html(path.read_text(encoding="utf-8")).hidden_text
+        except ValueError:
+            return []
 
     def passages(
         self, arxiv_id: str, version: int, question: str, k: int

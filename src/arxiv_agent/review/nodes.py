@@ -11,6 +11,7 @@ import re
 
 from langfuse import Langfuse, get_client
 
+from arxiv_agent.guardrails.content import ContentFlag, clean
 from arxiv_agent.llm import ChatModel, LLMOutputError, Usage, parse_json_object
 from arxiv_agent.review.state import (
     Candidate,
@@ -53,6 +54,7 @@ class ReviewNodes:
         screen_batch: int = 8,
         snowball_limit: int = 12,
         citations_per_seed: int = 10,
+        guard_content: bool = True,
         langfuse: Langfuse | None = None,
     ) -> None:
         if not 0 <= snowball_limit <= MAX_LOOKUP:
@@ -65,6 +67,7 @@ class ReviewNodes:
         self._screen_batch = screen_batch
         self._snowball_limit = snowball_limit
         self._citations_per_seed = citations_per_seed
+        self._guard_content = guard_content  # off only to measure what it stops
         self._langfuse = langfuse or get_client()
 
     async def plan(self, state: ReviewState) -> ReviewState:
@@ -133,10 +136,25 @@ class ReviewNodes:
             name="screener",
             input={"new_candidates": len(new), "already_screened": len(screened)},
         ) as span:
+            # Abstracts are untrusted text: the Screener sees them cleaned.
+            shown = new
+            flags: list[ContentFlag] = []
+            if self._guard_content:
+                shown = []
+                for candidate in new:
+                    abstract, found = clean(
+                        candidate.abstract, candidate.arxiv_id, "abstract"
+                    )
+                    flags += found
+                    shown.append(
+                        candidate.model_copy(update={"abstract": abstract})
+                        if found
+                        else candidate
+                    )
             # Small batches scored in parallel: one call for 33 papers took
             # 93 s and hit a 502 gateway timeout on its first try.
             size = self._screen_batch
-            batches = [new[i : i + size] for i in range(0, len(new), size)]
+            batches = [shown[i : i + size] for i in range(0, len(shown), size)]
             replies = await asyncio.gather(
                 *(self._score(state, batch) for batch in batches)
             )
@@ -150,13 +168,18 @@ class ReviewNodes:
             kept, dropped = self.select([*screened, *newly_screened])
             problems = [problem for _, _, problem in replies if problem]
             span.update(
-                output={"kept": [p.arxiv_id for p in kept], "batches": len(batches)},
-                level="WARNING" if problems else None,
+                output={
+                    "kept": [p.arxiv_id for p in kept],
+                    "batches": len(batches),
+                    "flagged": [f.model_dump() for f in flags],
+                },
+                level="WARNING" if problems or flags else None,
                 status_message="; ".join(problems)[:500] or None,
             )
         return {
             "kept": kept,
             "dropped": dropped,
+            "content_flags": flags,
             "spent": sum((usage for _, usage, _ in replies), Usage()),
         }
 

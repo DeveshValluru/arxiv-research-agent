@@ -22,6 +22,7 @@ RESULT_FIELDS = (
     "dropped",
     "edits",
     "ignored_edits",
+    "content_flags",
     "read",
     "claims",
     "drafts",
@@ -53,6 +54,8 @@ def step_summary(node: str, update: dict | None) -> dict:
         summary["edits"] = [edit.model_dump() for edit in update["edits"]]
     if update.get("ignored_edits"):
         summary["ignored"] = update["ignored_edits"]
+    if update.get("content_flags"):
+        summary["flagged"] = len(update["content_flags"])
     if "claims" in update:
         summary["claims"] = len(update["claims"])
     if "drafts" in update:
@@ -171,6 +174,11 @@ def format_report(result: dict) -> str:
             f"{authors}, {paper['published'][:4]}"
         )
     lines += [f"\nREMOVED (still failed the check): {s}" for s in result["removed"]]
+    for flag in result.get("content_flags", []):
+        lines.append(
+            f"\nFLAGGED in arXiv:{flag['arxiv_id']} ({flag['where']}, {flag['reason']}), "
+            f"taken out before any model saw it: {flag['text'][:120]}"
+        )
     for blocked in result.get("blocked", []):
         reasons = "; ".join(v["detail"] for v in blocked["violations"])
         lines.append(
@@ -183,13 +191,15 @@ def format_review_request(request: dict, dropped_shown: int = 15) -> str:
     # What a person sees at the pause: what will be read, and the best of what
     # won't, with the Screener's score and reason for each.
     def card(paper: dict) -> list[str]:
-        return [
+        lines = [
             (
                 f"  {paper['score']:2}  {paper['arxiv_id']}  [{paper['via']}]  "
                 f"{paper['title'][:70]}"
             ),
             f"          {paper['reason']}",
         ]
+        lines += [f"          FLAGGED {flag}" for flag in paper.get("flags", [])]
+        return lines
 
     kept, dropped = request["kept"], request["dropped"]
     lines = [f"Question: {request['question']}", f"\nKept, will be read ({len(kept)}):"]

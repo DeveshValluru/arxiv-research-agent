@@ -169,12 +169,16 @@ class FakeLibrary:
         self.sources = sources or {}
         self.on_ingest = on_ingest
         self.ingested: list[str] = []
+        self.hidden: dict[str, list[str]] = {}  # arXiv id -> hidden text found
 
     def ensure_ingested(self, arxiv_id, version):
         if self.on_ingest:
             self.on_ingest(arxiv_id)
         self.ingested.append(arxiv_id)
         return self.sources.get(arxiv_id, "full_text")
+
+    def hidden_text(self, arxiv_id, version):
+        return self.hidden.get(arxiv_id, [])
 
     def passages(self, arxiv_id, version, question, k):
         return [

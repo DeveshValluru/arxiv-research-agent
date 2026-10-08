@@ -12,6 +12,7 @@ from collections.abc import Callable
 from langfuse import Langfuse, get_client
 from langgraph.config import get_stream_writer
 
+from arxiv_agent.guardrails.content import ContentFlag, clean, hidden_text_flags
 from arxiv_agent.library import Library, Passage, Source
 from arxiv_agent.llm import ChatModel, LLMOutputError, Usage, parse_json_object
 from arxiv_agent.review.state import (
@@ -76,9 +77,11 @@ class Reader:
         passages_per_paper: int = 6,
         claims_per_paper: int = 4,
         clock: Callable[[], float] = time.time,
+        guard_content: bool = True,
         langfuse: Langfuse | None = None,
     ) -> None:
         self._llm = llm
+        self._guard_content = guard_content  # off only to measure what it stops
         self._library = library
         self._passages_per_paper = passages_per_paper
         self._claims_per_paper = claims_per_paper
@@ -99,13 +102,17 @@ class Reader:
             # skipped: ingesting is the slow part of a review.
             progress = get_stream_writer()  # "reading 3/8" for whoever watches
             pending: list[tuple[ScreenedPaper, Source, asyncio.Task | None]] = []
+            flags: list[ContentFlag] = []
             for done, paper in enumerate(papers, start=1):
                 task = None
                 now = self._clock()
                 if state["budget"].problem(state["spent"], elapsed(state, now)):
                     source: Source = "skipped"
                 else:
-                    source, passages = await self._prepare(state["question"], paper)
+                    source, passages, found = await self._prepare(
+                        state["question"], paper
+                    )
+                    flags += found
                     task = asyncio.create_task(
                         self._extract(state["question"], paper, passages)
                     )
@@ -140,13 +147,20 @@ class Reader:
                 output={
                     "claims": len(claims),
                     "papers": {r.arxiv_id: f"{r.source}, {r.claims}" for r in reports},
-                }
+                    "flagged": [f.model_dump() for f in flags],
+                },
+                level="WARNING" if flags else None,
             )
-        return {"claims": claims, "read": reports, "spent": spent}
+        return {
+            "claims": claims,
+            "read": reports,
+            "spent": spent,
+            "content_flags": flags,
+        }
 
     async def _prepare(
         self, question: str, paper: ScreenedPaper
-    ) -> tuple[Source, list[Passage]]:
+    ) -> tuple[Source, list[Passage], list[ContentFlag]]:
         with self._langfuse.start_as_current_observation(
             as_type="retriever",
             name="ingest-and-retrieve",
@@ -164,10 +178,30 @@ class Reader:
                     question,
                     self._passages_per_paper,
                 )
+            # Passages are untrusted text: the model, and later the Critic
+            # (claims keep the passage they came from), see them cleaned.
+            flags: list[ContentFlag] = []
+            if self._guard_content and passages:
+                cleaned = []
+                for passage in passages:
+                    text, found = clean(passage.text, paper.arxiv_id, "passage")
+                    flags += found
+                    cleaned.append(
+                        passage.model_copy(update={"text": text}) if found else passage
+                    )
+                passages = cleaned
+                hidden = await asyncio.to_thread(
+                    self._library.hidden_text, paper.arxiv_id, paper.version
+                )
+                flags += hidden_text_flags(paper.arxiv_id, hidden)
             span.update(
-                output={"source": source, "passages": [p.chunk_id for p in passages]}
+                output={
+                    "source": source,
+                    "passages": [p.chunk_id for p in passages],
+                    "flagged": len(flags),
+                }
             )
-        return source, passages
+        return source, passages, flags
 
     async def _extract(
         self, question: str, paper: ScreenedPaper, passages: list[Passage]
