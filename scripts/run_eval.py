@@ -3,11 +3,13 @@
     uv run --env-file .env python scripts/run_eval.py
     uv run --env-file .env python scripts/run_eval.py --limit 5
     uv run --env-file .env python scripts/run_eval.py --model meta-llama/Llama-3.1-8B-Instruct --providers deepinfra
+    uv run --env-file .env python scripts/run_eval.py --repeats 3 --concurrency 4
 
 Every question goes through the real Answerer (traced in Langfuse, environment
 "eval", one session per run), gets scored, and its scores are attached to its
-trace. Results go to data/eval_runs/<run id>/: one line per question, plus a
-summary stamped with every version that can change a score.
+trace. Results go to data/eval_runs/<run id>/: one line per question run, plus
+a summary stamped with every version that can change a score. Latency is only
+comparable between runs with the same --concurrency (default 1).
 """
 
 import argparse
@@ -17,52 +19,26 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from langfuse import Langfuse, get_client, propagate_attributes
+from langfuse import get_client
 
 from arxiv_agent.evals.judge import JUDGE_MODEL, JUDGE_PROMPT_VERSION, Judge
 from arxiv_agent.evals.provenance import content_hash, git_version
-from arxiv_agent.evals.runner import ItemScore, load_items, score_item, summarize
-from arxiv_agent.ingestion.chunker import CHUNKER_VERSION
-from arxiv_agent.ingestion.embedder import BGE_QUERY_PREFIX, DEFAULT_MODEL_ID, Embedder
-from arxiv_agent.llm import LLMUnavailableError
-from arxiv_agent.qa.answerer import (
-    PROMPT_VERSION,
-    REPAIR_PROMPT_VERSION,
-    Answerer,
+from arxiv_agent.evals.qa_run import (
+    MODEL,
+    PROVIDERS,
+    build_answerer,
+    eval_sets,
+    run_questions,
 )
-from arxiv_agent.qa.support import SupportChecker
-from arxiv_agent.retrieval.retriever import build_retriever
+from arxiv_agent.evals.runner import ItemScore, load_items, summarize
+from arxiv_agent.ingestion.chunker import CHUNKER_VERSION
+from arxiv_agent.ingestion.embedder import DEFAULT_MODEL_ID
+from arxiv_agent.qa.answerer import PROMPT_VERSION, REPAIR_PROMPT_VERSION
 from arxiv_agent.storage.chunk_store import ChunkStore
 
-EVAL_SETS = [Path("evals/qa_qasper.jsonl"), Path("evals/qa_survey.jsonl")]
 RUNS_DIR = Path("data/eval_runs")
 WORST_SHOWN = 8
 ID_WIDTH = 24  # QASPER ids are 47 characters; the start is enough to find one
-
-
-def attach_scores(langfuse: Langfuse, score: ItemScore, run_id: str) -> None:
-    if score.trace_id is None:
-        return
-    numeric = {"correctness": score.correctness, "token_f1": score.f1}
-    boolean = {"evidence_hit": score.evidence_hit, "refusal_ok": score.refusal_ok}
-    for name, value in numeric.items():
-        if value is not None:
-            langfuse.create_score(
-                name=name,
-                value=value,
-                trace_id=score.trace_id,
-                comment=score.judge_reasoning if name == "correctness" else None,
-                metadata={"run_id": run_id},
-            )
-    for name, value in boolean.items():
-        if value is not None:
-            langfuse.create_score(
-                name=name,
-                value=1.0 if value else 0.0,
-                data_type="BOOLEAN",
-                trace_id=score.trace_id,
-                metadata={"run_id": run_id},
-            )
 
 
 def fmt(value: float | None, pattern: str = "{:.2f}") -> str:
@@ -132,9 +108,9 @@ def print_report(summary: dict, meta: dict, scores: list[ItemScore], langfuse) -
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--sets", nargs="+", type=Path, default=EVAL_SETS)
-    parser.add_argument("--model", default="Qwen/Qwen3-32B")
-    parser.add_argument("--providers", default="deepinfra,nscale")
+    parser.add_argument("--sets", nargs="+", type=Path, default=eval_sets())
+    parser.add_argument("--model", default=MODEL)
+    parser.add_argument("--providers", default=PROVIDERS)
     parser.add_argument("-k", type=int, default=5, help="sources sent to the model")
     parser.add_argument(
         "--retriever", choices=["dense", "hybrid", "rerank"], default="rerank"
@@ -150,6 +126,8 @@ def main() -> None:
         action="store_true",
         help="remove failing sentences without asking for a rewrite first",
     )
+    parser.add_argument("--repeats", type=int, default=1, help="runs per question")
+    parser.add_argument("--concurrency", type=int, default=1)
     parser.add_argument("--out", type=Path, default=RUNS_DIR)
     args = parser.parse_args()
 
@@ -161,48 +139,39 @@ def main() -> None:
 
     items = load_items(args.sets)[: args.limit]
     store = ChunkStore.connect(os.environ["DATABASE_URL"])
-    embedder = Embedder(DEFAULT_MODEL_ID, query_prefix=BGE_QUERY_PREFIX)
-    retriever = build_retriever(args.retriever, store, embedder)
-    answerer = Answerer(
-        retriever,
+    answerer = build_answerer(
+        store,
+        langfuse,
         model=args.model,
         providers=args.providers.split(","),
         k=args.k,
-        langfuse=langfuse,
-        support=None if args.no_support_check else SupportChecker(langfuse=langfuse),
+        retriever=args.retriever,
+        support=not args.no_support_check,
         repair=not args.no_repair,
     )
-    judge = Judge(langfuse=langfuse)
+    done = 0
 
-    chunks_by_paper: dict[tuple[str, int], list] = {}
-    scores: list[ItemScore] = []
-    start = time.perf_counter()
-    for n, item in enumerate(items, start=1):
-        paper = (item.arxiv_id, item.version)
-        if paper not in chunks_by_paper:
-            chunks_by_paper[paper] = store.get_chunks(*paper)
-        try:
-            # One Langfuse session per run groups all of its traces together.
-            with propagate_attributes(session_id=run_id):
-                result = answerer.ask(item.question, *paper)
-        except (LLMUnavailableError, LookupError) as exc:
-            # One failed question must not end the run: record it and move on.
-            score = ItemScore(
-                id=item.id,
-                source=item.source,
-                type=item.type,
-                error=f"{type(exc).__name__}: {exc}",
-            )
-        else:
-            score = score_item(item, result, chunks_by_paper[paper], judge)
-            attach_scores(langfuse, score, run_id)
-        scores.append(score)
+    def progress(score: ItemScore) -> None:
+        nonlocal done
+        done += 1
         print(
-            f"[{n:2}/{len(items)}] {item.id[:ID_WIDTH]:{ID_WIDTH}} "
-            f"{score.status or 'FAILED':9} "
-            f"{fmt(score.correctness)}",
+            f"[{done:3}/{len(items) * args.repeats}] {score.id[:ID_WIDTH]:{ID_WIDTH}} "
+            f"{score.status or 'FAILED':9} {fmt(score.correctness)}",
             flush=True,
         )
+
+    start = time.perf_counter()
+    scores = run_questions(
+        items,
+        answerer,
+        Judge(langfuse=langfuse),
+        store,
+        run_id=run_id,
+        langfuse=langfuse,
+        repeats=args.repeats,
+        concurrency=args.concurrency,
+        progress=progress,
+    )
     store.close()
     langfuse.flush()
 
@@ -217,7 +186,9 @@ def main() -> None:
         "k": args.k,
         "prompt_version": PROMPT_VERSION,
         "embedder": DEFAULT_MODEL_ID,
-        "retriever": retriever.name,
+        "retriever": answerer.retriever_name,
+        "repeats": args.repeats,
+        "concurrency": args.concurrency,
         "support_check": not args.no_support_check,
         "support_repair": not (args.no_support_check or args.no_repair),
         "repair_prompt_version": REPAIR_PROMPT_VERSION,

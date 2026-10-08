@@ -1,10 +1,12 @@
 """Add arXiv papers to the local index.
 
     uv run --env-file .env python scripts/ingest_papers.py 2411.15594v6 2306.05685
+    uv run --env-file .env python scripts/ingest_papers.py --from-evals
 
 A versioned id ingests that version; a bare id asks arXiv for the latest one.
 Re-running is cheap: stored metadata, cached HTML, current chunks and existing
-vectors are all reused.
+vectors are all reused. --from-evals adds every paper the Q&A eval sets ask
+about: how CI builds the index the eval gate runs on.
 """
 
 import argparse
@@ -13,6 +15,8 @@ import os
 import re
 
 from arxiv_agent.clients.arxiv import ArxivClient, PaperSummary
+from arxiv_agent.evals.qa_run import eval_sets
+from arxiv_agent.evals.runner import load_items
 from arxiv_agent.ingestion.chunker import CHUNK_TOKENIZER
 from arxiv_agent.ingestion.embedder import (
     DEFAULT_MODEL_ID,
@@ -59,14 +63,26 @@ def resolve_papers(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("ids", nargs="+", help="arXiv ids, e.g. 2411.15594v6")
+    parser.add_argument("ids", nargs="*", help="arXiv ids, e.g. 2411.15594v6")
+    parser.add_argument(
+        "--from-evals",
+        action="store_true",
+        help="also every paper in the Q&A eval sets (evals/qa_*.jsonl)",
+    )
     parser.add_argument("--model", default=DEFAULT_MODEL_ID, help="embedder model id")
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
 
+    ids = list(args.ids)
+    if args.from_evals:
+        items = load_items(eval_sets())
+        ids += sorted({f"{item.arxiv_id}v{item.version}" for item in items})
+    if not ids:
+        parser.error("give arXiv ids, --from-evals, or both")
+
     store = ChunkStore.connect(os.environ["DATABASE_URL"])
     client = ArxivClient()
-    papers = resolve_papers(args.ids, store, client)
+    papers = resolve_papers(ids, store, client)
     if not papers:
         return
 

@@ -36,6 +36,8 @@ from arxiv_agent.review.critic import CRITIC_PROMPT, CRITIC_PROMPT_VERSION
 from arxiv_agent.review.setup import ReviewSettings
 
 CASES = Path("data/evals/judge_support.jsonl")
+# Real Critic removals a person labeled (scripts/triage_flags.py, 7.3).
+FLAGGED = Path("data/evals/judge_flagged.jsonl")
 RUNS_DIR = Path("data/eval_runs")
 SHOWN_MISSES = 6
 
@@ -95,7 +97,11 @@ async def main(args: argparse.Namespace) -> None:
     langfuse = get_client()
     started = datetime.now(UTC)
     run_id = f"{started:%Y%m%d-%H%M%S}-judge"
-    lines = args.cases.read_text(encoding="utf-8").splitlines()
+    lines = [
+        line
+        for path in args.cases
+        for line in path.read_text(encoding="utf-8").splitlines()
+    ]
     cases = [SupportCase.model_validate_json(line) for line in lines if line.strip()]
     cases = cases[: args.limit] if args.limit else cases
     available = judges(ReviewSettings(), langfuse)
@@ -136,7 +142,12 @@ async def main(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--cases", type=Path, default=CASES)
+    parser.add_argument(
+        "--cases",
+        type=Path,
+        nargs="+",
+        default=[CASES, *([FLAGGED] if FLAGGED.exists() else [])],
+    )
     parser.add_argument(
         "--judges",
         nargs="+",

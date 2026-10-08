@@ -33,8 +33,15 @@ from arxiv_agent.review.critic import CRITIC_PROMPT, judging_request
 from arxiv_agent.review.numbers import missing_numbers, result_numbers
 from arxiv_agent.review.state import Claim, Judgment
 
+# flagged: a sentence the Critic removed in a real review, labeled by a
+# person (7.3).
 Kind = Literal[
-    "supported", "number_changed", "negated", "overgeneralized", "wrong_passage"
+    "supported",
+    "number_changed",
+    "negated",
+    "overgeneralized",
+    "wrong_passage",
+    "flagged",
 ]
 KINDS: tuple[Kind, ...] = (
     "supported",
@@ -42,6 +49,7 @@ KINDS: tuple[Kind, ...] = (
     "negated",
     "overgeneralized",
     "wrong_passage",
+    "flagged",
 )
 SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 AUXILIARY = re.compile(

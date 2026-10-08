@@ -43,6 +43,7 @@ class ItemScore(BaseModel):
     id: str
     source: str
     type: ItemType
+    repeat: int = 0  # which run of this question (the gate asks each one r times)
     status: str | None = None  # None: no answer at all (the run failed)
     answer: str | None = None
     correctness: float | None = None  # 1, 0.5 or 0; None: not graded

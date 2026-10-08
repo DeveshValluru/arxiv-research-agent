@@ -1,0 +1,305 @@
+{
+  "meta": {
+    "run_id": "20261008-072226-gate-baseline",
+    "suite": "baseline",
+    "repeats": 3,
+    "git": "d3d9d84-dirty",
+    "model": "Qwen/Qwen3-32B",
+    "providers": "deepinfra,nscale",
+    "k": 5,
+    "retriever": "rerank",
+    "support_check": true,
+    "support_repair": true,
+    "prompt_version": 1,
+    "repair_prompt_version": 1,
+    "critic_prompt_version": 2,
+    "chunker_version": 4,
+    "judge_model": "meta-llama/Llama-3.3-70B-Instruct",
+    "judge_prompt_version": 1,
+    "eval_sets": {
+      "evals/qa_qasper.jsonl": "4a9904d73231",
+      "evals/qa_survey.jsonl": "1bae4c5e4e44"
+    },
+    "duration_s": 305,
+    "summary": {
+      "questions": 150,
+      "run_failures": 0,
+      "judge_failures": 1,
+      "correctness": 0.8657718120805369,
+      "correctness_by_type": {
+        "answerable": 0.8861386138613861,
+        "unanswerable": 0.8717948717948718,
+        "false_premise": 0.6111111111111112
+      },
+      "correctness_by_source": {
+        "qasper": 0.825,
+        "survey": 0.9130434782608695
+      },
+      "refusal_accuracy": 0.8717948717948718,
+      "false_refusal_rate": 0.058823529411764705,
+      "evidence_recall": 0.9117647058823529,
+      "evidence_unknown": 9,
+      "token_f1": 0.3423757938166268,
+      "invalid_rate": 0.0,
+      "support_flagged_rate": 0.06666666666666667,
+      "support_repaired": 8,
+      "support_refusals": 2,
+      "cost_usd": 0.01877204,
+      "latency_ms_p50": 4737.34309989959,
+      "latency_ms_p95": 12302.213400020264
+    }
+  },
+  "pooled_var": 0.023569023569023566,
+  "items": {
+    "qasper-622efbecd9350a0f4487bdff2b8b362ef2541f3c": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-4137a82d7752be7a6c142ceb48ce784fd475fb06": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-0ac6fbd81e2dd95b800283dc7e59ce969d45fc02": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-a77d38427639d54461ae308f3045434f81e497d0": {
+      "runs": 2,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-010fd15696580d9924ac0275a4ff269005e5808d": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-d36a6447bfe58204e0d29f9213d84be04d875624": {
+      "runs": 3,
+      "mean": 0.8333333333333334,
+      "var": 0.08333333333333333
+    },
+    "qasper-9c2cacf77041e02d38f92a4c490df1e04552f96f": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-3de3a083b8ba3086792d38ae9667e095070f7f37": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-04914917d01c9cd8718cd551dc253eb3827915d8": {
+      "runs": 3,
+      "mean": 0.0,
+      "var": 0.0
+    },
+    "qasper-7ff7c286d3118a8be5688e2d18e9a56fe83679ad": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-1ecbbb60dc44a701e9c57c22167dd412711bb0be": {
+      "runs": 3,
+      "mean": 0.8333333333333334,
+      "var": 0.08333333333333333
+    },
+    "qasper-592df9831692b8fde213257ed1894344da3e0594": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-60e6296ca2a697892bd67558a21a83ef01a38177": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-c728fe6137f114c02e921f9be4a02a5bd83ae787": {
+      "runs": 3,
+      "mean": 0.5,
+      "var": 0.0
+    },
+    "qasper-50bda708293532f07a3193aaea0519d433fcc040": {
+      "runs": 3,
+      "mean": 0.8333333333333334,
+      "var": 0.08333333333333333
+    },
+    "qasper-46e660becd727c994a2a35c6587e15ea8bf8272d": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-d1a4529ea32aaab5ca3b9d9ae5c16f146c23af6b": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-7fba61426737394304e307cdc7537225f6253150": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-11360385dff0a9d7b8f4b106ba2b7fe15ca90d7c": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-875fbf4e5f93c3da63e28a233ce1d8405c7dfe63": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-56b66d19dbc5e605788166e168f36d25f5beb774": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-2a55076a66795793d79a3edfae1041098404fbc3": {
+      "runs": 3,
+      "mean": 0.3333333333333333,
+      "var": 0.3333333333333333
+    },
+    "qasper-ecaa10a2d9927fa6ab6a954488f12aa6b42ddc1a": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-8b49423b7d1fa834128aa5038aa16c6ef3fdfa32": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "qasper-5f7f4a1d4380c118a58ed506c057d3b7aa234c1e": {
+      "runs": 3,
+      "mean": 0.0,
+      "var": 0.0
+    },
+    "qasper-a79a23573d74ec62cbed5d5457a51419a66f6296": {
+      "runs": 3,
+      "mean": 0.0,
+      "var": 0.0
+    },
+    "qasper-d427e9d181434078c78b7ee33a26b269f160f6d2": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-a01": {
+      "runs": 3,
+      "mean": 0.8333333333333334,
+      "var": 0.08333333333333333
+    },
+    "survey-a02": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-a03": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-a04": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-a05": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-a06": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-a07": {
+      "runs": 3,
+      "mean": 0.3333333333333333,
+      "var": 0.3333333333333333
+    },
+    "survey-a08": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-a09": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-a10": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-a11": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-a12": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-a13": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-a14": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-a15": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-u01": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-u02": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-u03": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-u04": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-u05": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-f01": {
+      "runs": 3,
+      "mean": 0.5,
+      "var": 0.0
+    },
+    "survey-f02": {
+      "runs": 3,
+      "mean": 0.6666666666666666,
+      "var": 0.08333333333333333
+    },
+    "survey-f03": {
+      "runs": 3,
+      "mean": 0.6666666666666666,
+      "var": 0.08333333333333333
+    }
+  }
+}

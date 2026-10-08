@@ -2,6 +2,11 @@
 
     uv run --env-file .env python scripts/run_review_eval.py
     uv run --env-file .env python scripts/run_review_eval.py --cases rag tool-learning
+    uv run --env-file .env python scripts/run_review_eval.py --set evals/review_labels.jsonl
+
+The second set is built from reviewers' edits (scripts/triage_flags.py, 7.3):
+the gold is what a reviewer had to add, and keeping a paper they removed is
+reported.
 
 Each case runs a review of a survey's question in quick mode (no pause: this
 measures the system alone), as of the survey's first version date, and scores
@@ -88,6 +93,8 @@ def print_report(scores: list[ReviewScore], summary: dict, meta: dict) -> None:
             f"{fmt(s.support_rate)}   {s.llm_calls:>4}"
             + (f"  STOPPED: {s.stopped}" if s.stopped else "")
         )
+        if s.excluded_kept:  # cases from review labels (7.3)
+            print(f"{'':<14}kept again what a reviewer removed: {s.excluded_kept}")
     print(
         f"{'mean':<25}  {fmt(summary['search_recall'])}    "
         f"{fmt(summary['candidate_recall'])}           {fmt(summary['kept_precision'])}  "
