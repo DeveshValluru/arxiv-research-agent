@@ -14,6 +14,7 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
+from arxiv_agent.evals.qa_run import eval_sets
 from arxiv_agent.evals.qa_scoring import gold_chunk_ids
 from arxiv_agent.evals.retrieval import (
     first_hit_rank,
@@ -23,10 +24,14 @@ from arxiv_agent.evals.retrieval import (
 from arxiv_agent.evals.runner import EvalItem, load_items
 from arxiv_agent.ingestion.embedder import BGE_QUERY_PREFIX, DEFAULT_MODEL_ID, Embedder
 from arxiv_agent.retrieval.bm25 import BM25Index
-from arxiv_agent.retrieval.retriever import Retriever, RetrieverKind, build_retriever
+from arxiv_agent.retrieval.retriever import (
+    Retriever,
+    RetrieverKind,
+    build_retriever,
+    keyword_text,
+)
 from arxiv_agent.storage.chunk_store import ChunkStore
 
-EVAL_SETS = [Path("evals/qa_qasper.jsonl"), Path("evals/qa_survey.jsonl")]
 DEPTH = 20  # how far down each ranking we look
 CUTOFFS = (1, 3, 5, 10, 20)
 
@@ -61,7 +66,7 @@ def make_searches(store: ChunkStore, embedder: Embedder) -> dict[str, Search]:
             chunks = store.get_chunks(*paper)
             bm25_indexes[paper] = (
                 [chunk.chunk_id for chunk in chunks],
-                BM25Index([chunk.text for chunk in chunks]),
+                BM25Index([keyword_text(chunk) for chunk in chunks]),  # as shipped
             )
         ids, index = bm25_indexes[paper]
         return [ids[i] for i, _ in index.top(question, DEPTH)]
@@ -85,7 +90,7 @@ def source_recall(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--methods", nargs="+", help="default: all of them")
-    parser.add_argument("--sets", nargs="+", type=Path, default=EVAL_SETS)
+    parser.add_argument("--sets", nargs="+", type=Path, default=eval_sets())
     args = parser.parse_args()
 
     store = ChunkStore.connect(os.environ["DATABASE_URL"])
