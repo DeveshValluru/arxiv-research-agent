@@ -120,3 +120,9 @@ scripts/         CLIs: ask, review, ingest, evals, worker
 evals/           eval sets and the gate baseline (no paper text)
 web/             Next.js UI
 ```
+
+## License
+
+The code is under the [MIT License](LICENSE). `evals/qa_qasper.jsonl` contains
+questions, answers and evidence from [QASPER](https://huggingface.co/datasets/allenai/qasper)
+(Dasigi et al., 2021), which is licensed under CC BY 4.0.
