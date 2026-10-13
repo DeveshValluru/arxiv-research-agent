@@ -28,7 +28,7 @@ Every component has an eval, and the evals have been checked too.
 
 | What | Result |
 |---|---|
-| Q&A correctness: 50 questions over 9 papers (QASPER + a survey paper; answerable, unanswerable, false premise), graded by an LLM judge from a different model family | **0.87** (3-run baseline) |
+| Q&A correctness: 56 questions over 10 papers (QASPER, a survey paper, and questions about a paper's structure such as "what is the abstract?"; answerable, unanswerable, false premise), graded by an LLM judge from a different model family | **0.87** (3-run baseline) |
 | Hybrid retrieval + cross-encoder reranking vs dense only | evidence recall@5 **0.68 → 0.91**, correctness 0.76 → 0.83 |
 | Literature reviews vs 5 survey papers' bibliographies | kept precision 0.50 (**1.8×** the candidate pool); snowballed papers were expert-cited **53%** of the time vs 21% for searched ones |
 | Judging the judge: sentences broken on purpose by code (changed number, negated, overgeneralized, wrong source) | caught **94%** with 0 false alarms (82% before a code number check and a stricter prompt; a same-family judge caught 50%) |

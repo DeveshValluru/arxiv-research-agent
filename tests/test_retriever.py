@@ -12,6 +12,7 @@ from arxiv_agent.retrieval.retriever import (
     DenseRetriever,
     HybridRetriever,
     build_retriever,
+    keyword_text,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -162,3 +163,15 @@ def test_forget_drops_a_papers_cached_index(indexed):
     DenseRetriever(indexed, FakeEmbedder()).forget(PAPER)  # nothing to forget
 
     assert PAPER not in retriever._papers
+
+
+def test_keyword_search_matches_section_headings(indexed):
+    # "abstract" is only in the Abstract chunk's heading, never in its text:
+    # with text alone, "what is the abstract?" matched nothing.
+    _, bm25 = HybridRetriever(indexed, FakeEmbedder())._paper(PAPER)
+
+    [(top, _)] = bm25.top("what is the abstract of the paper", 1)
+
+    assert CHUNKS[top].section_path == ["Abstract"]
+    assert "abstract" not in CHUNKS[top].text.lower()
+    assert keyword_text(CHUNKS[4]).startswith("2. Method 2.1. Position Bias")

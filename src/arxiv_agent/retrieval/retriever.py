@@ -11,6 +11,15 @@ RetrieverKind = Literal["dense", "hybrid", "rerank"]
 CANDIDATES = 20  # how many chunks each first-stage method passes on
 
 
+def keyword_text(chunk: Chunk) -> str:
+    # What BM25 matches: the section headings, then the text. Without the
+    # headings, a question that names a part of the paper ("what is the
+    # abstract?") matched nothing: the word is in the heading, not the text,
+    # so the abstract never reached the reranker. (Phase 3 measured text only
+    # as equally good, but only on content questions.)
+    return f"{' '.join(chunk.section_path)}\n{chunk.text}"
+
+
 class Retriever(Protocol):
     # Anything with a name and a retrieve() method can feed the Answerer.
     # Scores are only comparable within one retriever (cosine, RRF, or
@@ -73,7 +82,7 @@ class HybridRetriever:
         chunks = self._store.get_chunks(*paper)
         built = (
             {chunk.chunk_id: chunk for chunk in chunks},
-            BM25Index([chunk.text for chunk in chunks]),
+            BM25Index([keyword_text(chunk) for chunk in chunks]),
         )
         if chunks:
             self._papers[paper] = built

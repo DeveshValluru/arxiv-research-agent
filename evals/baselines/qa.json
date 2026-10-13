@@ -1,11 +1,11 @@
 {
   "meta": {
-    "run_id": "20261008-072226-gate-baseline",
+    "run_id": "20261013-210615-gate-baseline",
     "suite": "baseline",
     "repeats": 3,
-    "git": "d3d9d84-dirty",
+    "git": "9a8cf1c-dirty",
     "model": "Qwen/Qwen3-32B",
-    "providers": "deepinfra,nscale",
+    "providers": "deepinfra",
     "k": 5,
     "retriever": "rerank",
     "support_check": true,
@@ -18,38 +18,40 @@
     "judge_prompt_version": 1,
     "eval_sets": {
       "evals/qa_qasper.jsonl": "4a9904d73231",
+      "evals/qa_structure.jsonl": "1361fb74f203",
       "evals/qa_survey.jsonl": "1bae4c5e4e44"
     },
-    "duration_s": 305,
+    "duration_s": 437,
     "summary": {
-      "questions": 150,
-      "run_failures": 0,
-      "judge_failures": 1,
-      "correctness": 0.8657718120805369,
+      "questions": 168,
+      "run_failures": 1,
+      "judge_failures": 0,
+      "correctness": 0.8682634730538922,
       "correctness_by_type": {
-        "answerable": 0.8861386138613861,
-        "unanswerable": 0.8717948717948718,
-        "false_premise": 0.6111111111111112
+        "answerable": 0.8739495798319328,
+        "unanswerable": 0.8974358974358975,
+        "false_premise": 0.6666666666666666
       },
       "correctness_by_source": {
-        "qasper": 0.825,
+        "qasper": 0.81875,
+        "structure": 0.9166666666666666,
         "survey": 0.9130434782608695
       },
-      "refusal_accuracy": 0.8717948717948718,
+      "refusal_accuracy": 0.8974358974358975,
       "false_refusal_rate": 0.058823529411764705,
-      "evidence_recall": 0.9117647058823529,
+      "evidence_recall": 0.8739495798319328,
       "evidence_unknown": 9,
-      "token_f1": 0.3423757938166268,
+      "token_f1": 0.3516374305596356,
       "invalid_rate": 0.0,
-      "support_flagged_rate": 0.06666666666666667,
-      "support_repaired": 8,
-      "support_refusals": 2,
-      "cost_usd": 0.01877204,
-      "latency_ms_p50": 4737.34309989959,
-      "latency_ms_p95": 12302.213400020264
+      "support_flagged_rate": 0.04790419161676647,
+      "support_repaired": 7,
+      "support_refusals": 1,
+      "cost_usd": 0.020969079999999998,
+      "latency_ms_p50": 7539.816200034693,
+      "latency_ms_p95": 22644.11380002275
     }
   },
-  "pooled_var": 0.023569023569023566,
+  "pooled_var": 0.019519519519519517,
   "items": {
     "qasper-622efbecd9350a0f4487bdff2b8b362ef2541f3c": {
       "runs": 3,
@@ -67,7 +69,7 @@
       "var": 0.0
     },
     "qasper-a77d38427639d54461ae308f3045434f81e497d0": {
-      "runs": 2,
+      "runs": 3,
       "mean": 1.0,
       "var": 0.0
     },
@@ -78,8 +80,8 @@
     },
     "qasper-d36a6447bfe58204e0d29f9213d84be04d875624": {
       "runs": 3,
-      "mean": 0.8333333333333334,
-      "var": 0.08333333333333333
+      "mean": 0.5,
+      "var": 0.25
     },
     "qasper-9c2cacf77041e02d38f92a4c490df1e04552f96f": {
       "runs": 3,
@@ -97,19 +99,19 @@
       "var": 0.0
     },
     "qasper-7ff7c286d3118a8be5688e2d18e9a56fe83679ad": {
-      "runs": 3,
-      "mean": 1.0,
-      "var": 0.0
+      "runs": 2,
+      "mean": 0.5,
+      "var": 0.5
     },
     "qasper-1ecbbb60dc44a701e9c57c22167dd412711bb0be": {
       "runs": 3,
-      "mean": 0.8333333333333334,
-      "var": 0.08333333333333333
+      "mean": 1.0,
+      "var": 0.0
     },
     "qasper-592df9831692b8fde213257ed1894344da3e0594": {
       "runs": 3,
-      "mean": 1.0,
-      "var": 0.0
+      "mean": 0.6666666666666666,
+      "var": 0.3333333333333333
     },
     "qasper-60e6296ca2a697892bd67558a21a83ef01a38177": {
       "runs": 3,
@@ -158,8 +160,8 @@
     },
     "qasper-2a55076a66795793d79a3edfae1041098404fbc3": {
       "runs": 3,
-      "mean": 0.3333333333333333,
-      "var": 0.3333333333333333
+      "mean": 1.0,
+      "var": 0.0
     },
     "qasper-ecaa10a2d9927fa6ab6a954488f12aa6b42ddc1a": {
       "runs": 3,
@@ -186,10 +188,40 @@
       "mean": 1.0,
       "var": 0.0
     },
-    "survey-a01": {
+    "structure-01": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "structure-02": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "structure-03": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "structure-04": {
+      "runs": 3,
+      "mean": 0.6666666666666666,
+      "var": 0.08333333333333333
+    },
+    "structure-05": {
       "runs": 3,
       "mean": 0.8333333333333334,
       "var": 0.08333333333333333
+    },
+    "structure-06": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
+    },
+    "survey-a01": {
+      "runs": 3,
+      "mean": 1.0,
+      "var": 0.0
     },
     "survey-a02": {
       "runs": 3,
@@ -218,8 +250,8 @@
     },
     "survey-a07": {
       "runs": 3,
-      "mean": 0.3333333333333333,
-      "var": 0.3333333333333333
+      "mean": 0.0,
+      "var": 0.0
     },
     "survey-a08": {
       "runs": 3,
@@ -293,13 +325,13 @@
     },
     "survey-f02": {
       "runs": 3,
-      "mean": 0.6666666666666666,
-      "var": 0.08333333333333333
+      "mean": 1.0,
+      "var": 0.0
     },
     "survey-f03": {
       "runs": 3,
-      "mean": 0.6666666666666666,
-      "var": 0.08333333333333333
+      "mean": 0.5,
+      "var": 0.0
     }
   }
 }
